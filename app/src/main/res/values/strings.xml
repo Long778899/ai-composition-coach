@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI 构图教练</string>
+
+    <!-- 规则提示文案（外置，便于国际化，见 NFR-9） -->
+    <string name="hint_level_left">相机向左倾斜一点</string>
+    <string name="hint_level_right">相机向右倾斜一点</string>
+    <string name="hint_level_ok">已水平</string>
+    <string name="hint_expose_low">画面偏暗，增加曝光</string>
+    <string name="hint_expose_high">画面偏亮，降低曝光</string>
+    <string name="hint_subject_left">把主体往左移一点</string>
+    <string name="hint_subject_right">把主体往右移一点</string>
+    <string name="hint_subject_up">把主体往上移一点</string>
+    <string name="hint_subject_down">把主体往下移一点</string>
+    <string name="hint_face_small">靠近一点</string>
+    <string name="hint_face_none">把主体放进画面里</string>
+    <string name="hint_blur">可能失焦，稳住手机</string>
+    <string name="hint_good">构图不错，可以按了</string>
+</resources>
