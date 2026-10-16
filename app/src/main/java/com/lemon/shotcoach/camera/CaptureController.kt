@@ -1,12 +1,14 @@
 package com.lemon.shotcoach.camera
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.media.MediaActionSound
 import android.net.Uri
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
-import androidx.camera.core.toBitmap
 import com.lemon.shotcoach.data.MediaStoreSaver
 import com.lemon.shotcoach.render.PhotoProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -125,8 +127,11 @@ class CaptureController(private val context: Context) {
 
                 // 3. 处理 + 保存（后台线程）
                 val bitmap = withContext(Dispatchers.Default) {
-                    val raw = proxy.toBitmap()
-                    proxy.close()
+                    val raw = try {
+                        proxy.decodeJpegBitmap()
+                    } finally {
+                        proxy.close()
+                    }
 
                     // 按画幅裁切（居中裁切，不拉伸）
                     val cropped = PhotoProcessor.cropToAspect(raw, params.aspect.ratio)
@@ -214,6 +219,25 @@ class CaptureController(private val context: Context) {
         imageCapture = null
         runCatching { shutterSound.release() }
     }
+}
+
+/**
+ * CameraX 1.3 ImageCapture delivers a JPEG [ImageProxy]. 1.3 has no
+ * ImageProxy.toBitmap(), so decode the first plane and apply the capture rotation.
+ */
+private fun ImageProxy.decodeJpegBitmap(): Bitmap {
+    val buffer = planes[0].buffer
+    buffer.rewind()
+    val bytes = ByteArray(buffer.remaining())
+    buffer.get(bytes)
+    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        ?: throw IllegalStateException("Failed to decode captured JPEG")
+    val rotation = imageInfo.rotationDegrees
+    if (rotation == 0) return decoded
+    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+    val upright = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    if (upright !== decoded) decoded.recycle()
+    return upright
 }
 
 /** 极简单线程 Executor：ImageCapture 回调只需不阻塞，用不着线程池 */

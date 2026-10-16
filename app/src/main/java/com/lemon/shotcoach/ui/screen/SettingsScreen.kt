@@ -27,6 +27,7 @@ import com.lemon.shotcoach.ui.component.PageScaffold
 import com.lemon.shotcoach.ui.component.ParamSliderRow
 import com.lemon.shotcoach.ui.component.SectionHeader
 import com.lemon.shotcoach.ui.component.ToggleRow
+import com.lemon.shotcoach.ui.theme.ShotColors
 
 /**
  * 设置页。
@@ -125,7 +126,7 @@ fun SettingsScreen(
                 label = { it.label },
             )
             Text(
-                text = "HEIC 需要 Android 11 及以上；低版本会自动回落到 JPEG。",
+                text = "HEIC 由系统编码器写入，体积更小。编码失败时不会留下坏图。",
                 color = ShotColors.TextDisabled,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 20.dp, top = 4.dp),

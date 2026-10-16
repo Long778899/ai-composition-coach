@@ -3,6 +3,7 @@ package com.lemon.shotcoach.analysis.analyzer
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
+import org.opencv.core.MatOfDouble
 import org.opencv.imgproc.Imgproc
 
 /**
@@ -18,8 +19,8 @@ class SharpnessAnalyzer {
     val cadence = 3
 
     private val lap = Mat()
-    private val mean = Mat()
-    private val stddev = Mat()
+    private val mean = MatOfDouble()
+    private val stddev = MatOfDouble()
 
     private val history = ArrayDeque<Float>()
     private val historyCap: Int

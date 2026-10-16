@@ -132,13 +132,18 @@ class LutAndParamsTest {
     }
 
     @Test
-    fun `恒等快查表不应改变任何像素`() {
+    fun identityFastTableStaysWithinFiveBitBins() {
         val table = LutBuilder.bake(FilterCatalog.NONE, strength = 1f).buildFastTable()
         val px = intArrayOf(pack(12, 200, 77), pack(255, 0, 128))
         val before = px.copyOf()
         CpuLutApplier.applyFast(px, table)
+        // Preview lookup quantizes each channel to 5 bits, so identity cannot be bit-exact.
         for (i in px.indices) {
-            assertEquals(before[i], px[i])
+            assertEquals(before[i] and 0xFF000000.toInt(), px[i] and 0xFF000000.toInt())
+            for (shift in intArrayOf(16, 8, 0)) {
+                val diff = abs(channel(before[i], shift) - channel(px[i], shift))
+                assertTrue("pixel $i channel $shift drifted by $diff", diff <= 8)
+            }
         }
     }
 

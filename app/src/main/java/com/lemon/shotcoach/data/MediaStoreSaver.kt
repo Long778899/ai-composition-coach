@@ -8,8 +8,10 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
+import androidx.heifwriter.HeifWriter
 import com.lemon.shotcoach.camera.CameraParams
-import java.io.OutputStream
+import com.lemon.shotcoach.camera.SaveFormat
+import java.io.FileDescriptor
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -39,7 +41,7 @@ object MediaStoreSaver {
         params: CameraParams,
         takenAtMillis: Long = System.currentTimeMillis(),
     ): Uri? {
-        val format = params.saveFormat.effective()
+        val format = params.saveFormat
         val name = buildFileName(takenAtMillis, format.ext)
         val resolver = context.contentResolver
 
@@ -61,15 +63,23 @@ object MediaStoreSaver {
             ?: return null
 
         return try {
-            val quality = if (format == com.lemon.shotcoach.camera.SaveFormat.PNG) 100 else params.quality
-            resolver.openOutputStream(uri)?.use { out ->
-                val ok = bitmap.compress(format.compressFormat(), quality, out)
-                if (!ok) throw java.io.IOException("Bitmap.compress 返回 false（格式=${format.label}）")
-                if (format == com.lemon.shotcoach.camera.SaveFormat.JPEG) {
-                    out.flush()
-                    writeExif(resolver, uri, out, params, takenAtMillis)
+            val quality = if (format == SaveFormat.PNG) 100 else params.quality
+            when (format) {
+                SaveFormat.JPEG, SaveFormat.PNG -> {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        val ok = bitmap.compress(format.compressFormat(), quality, out)
+                        if (!ok) throw java.io.IOException("Bitmap.compress returned false (${format.label})")
+                    } ?: throw java.io.IOException("openOutputStream returned null")
+                    if (format == SaveFormat.JPEG) {
+                        writeExif(resolver, uri, params, takenAtMillis)
+                    }
                 }
-            } ?: throw java.io.IOException("openOutputStream 返回 null")
+                SaveFormat.HEIC -> {
+                    resolver.openFileDescriptor(uri, "w")?.use { pfd ->
+                        writeHeic(pfd.fileDescriptor, bitmap, quality)
+                    } ?: throw java.io.IOException("openFileDescriptor returned null")
+                }
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 values.clear()
@@ -84,33 +94,66 @@ object MediaStoreSaver {
         }
     }
 
+    /**
+     * ExifInterface has no OutputStream constructor, and saveAttributes() needs a
+     * readable JPEG. Reopen the MediaStore item after Bitmap.compress has finished.
+     */
     private fun writeExif(
         resolver: android.content.ContentResolver,
         uri: Uri,
-        out: OutputStream,
         params: CameraParams,
         takenAtMillis: Long,
     ) {
-        val exif = runCatching { ExifInterface(out) }.getOrNull() ?: return
-        exif.setAttribute(
-            ExifInterface.TAG_DATETIME_ORIGINAL,
-            SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(java.util.Date(takenAtMillis)),
+        val pfd = resolver.openFileDescriptor(uri, "rw") ?: return
+        pfd.use {
+            val exif = ExifInterface(it.fileDescriptor)
+            exif.setAttribute(
+                ExifInterface.TAG_DATETIME_ORIGINAL,
+                SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(java.util.Date(takenAtMillis)),
+            )
+            exif.setAttribute(ExifInterface.TAG_MAKE, "ShotCoach")
+            exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
+            if (!params.isIsoAuto) {
+                exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, params.iso.toString())
+            }
+            if (!params.isShutterAuto) {
+                val sec = params.shutterNs / 1_000_000_000.0
+                exif.setAttribute(
+                    ExifInterface.TAG_EXPOSURE_TIME,
+                    if (sec < 1) "1/${Math.round(1 / sec)}" else sec.toString(),
+                )
+            }
+            exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, params.summary())
+            if (params.lensFacing == CameraParams.LENS_FACING_FRONT) {
+                exif.setAttribute(ExifInterface.TAG_LENS_MODEL, "front")
+            }
+            exif.saveAttributes()
+        }
+    }
+
+    /** Bitmap.CompressFormat has no HEIC. Encode through the platform HEIF writer. */
+    private fun writeHeic(fd: FileDescriptor, bitmap: Bitmap, quality: Int) {
+        val argb = if (bitmap.config == Bitmap.Config.ARGB_8888) {
+            bitmap
+        } else {
+            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        }
+        val writer = HeifWriter.Builder(
+            fd,
+            argb.width,
+            argb.height,
+            HeifWriter.INPUT_MODE_BITMAP,
         )
-        exif.setAttribute(ExifInterface.TAG_MAKE, "ShotCoach")
-        exif.setAttribute(ExifInterface.TAG_MODEL, Build.MODEL)
-        if (!params.isIsoAuto) {
-            exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, params.iso.toString())
+            .setQuality(quality.coerceIn(0, 100))
+            .build()
+        try {
+            writer.start()
+            writer.addBitmap(argb)
+            writer.stop(10_000)
+        } finally {
+            writer.close()
+            if (argb !== bitmap) argb.recycle()
         }
-        if (!params.isShutterAuto) {
-            // TAG_EXPOSURE_TIME 单位：秒，写成 "1/500"
-            val sec = params.shutterNs / 1_000_000_000.0
-            exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, if (sec < 1) "1/${Math.round(1 / sec)}" else sec.toString())
-        }
-        exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, params.summary())
-        if (params.lensFacing == CameraParams.LENS_FACING_FRONT) {
-            exif.setAttribute(ExifInterface.TAG_LENS_MODEL, "front")
-        }
-        runCatching { exif.saveAttributes() }
     }
 
     private fun buildFileName(takenAtMillis: Long, ext: String): String {
@@ -118,33 +161,13 @@ object MediaStoreSaver {
         return "SC_$ts.$ext"
     }
 
-    /** SaveFormat → Bitmap.CompressFormat */
-    private fun com.lemon.shotcoach.camera.SaveFormat.compressFormat(): Bitmap.CompressFormat =
-        when (this) {
-            com.lemon.shotcoach.camera.SaveFormat.JPEG -> Bitmap.CompressFormat.JPEG
-            com.lemon.shotcoach.camera.SaveFormat.PNG -> Bitmap.CompressFormat.PNG
-            com.lemon.shotcoach.camera.SaveFormat.HEIC ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    Bitmap.CompressFormat.HEIC
-                } else {
-                    Bitmap.CompressFormat.JPEG
-                }
-        }
-}
-
-/**
- * 低版本回落的实际格式。
- *
- * HEIC 编码需要 API 30+。低版本上如果只把编码换成 JPEG 却仍然写
- * `image/heic` 的 MIME 和 `.heic` 后缀，相册里就会出现**打不开的坏图**
- * （扩展名与实际字节不符）。所以格式回落必须连 MIME 与后缀一起回落。
- */
-private fun com.lemon.shotcoach.camera.SaveFormat.effective(): com.lemon.shotcoach.camera.SaveFormat =
-    if (this == com.lemon.shotcoach.camera.SaveFormat.HEIC && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-        com.lemon.shotcoach.camera.SaveFormat.JPEG
-    } else {
-        this
+    /** JPEG and PNG only. HEIC goes through [writeHeic]. */
+    private fun SaveFormat.compressFormat(): Bitmap.CompressFormat = when (this) {
+        SaveFormat.JPEG -> Bitmap.CompressFormat.JPEG
+        SaveFormat.PNG -> Bitmap.CompressFormat.PNG
+        SaveFormat.HEIC -> throw IllegalStateException("HEIC is written by HeifWriter")
     }
+}
 
 /** 参数摘要，写进 EXIF 的 ImageDescription，方便事后复盘 */
 fun CameraParams.summary(): String = buildString {
