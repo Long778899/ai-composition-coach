@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lemon.shotcoach.camera.AspectRatio
 import com.lemon.shotcoach.camera.CameraParams
+import com.lemon.shotcoach.camera.EvRange
 import com.lemon.shotcoach.camera.FilterCatalog
 import com.lemon.shotcoach.camera.FlashMode
 import com.lemon.shotcoach.camera.FocusMode

@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -224,7 +225,7 @@ private fun ColorChips(selected: Int, onSelect: (Int) -> Unit) {
 }
 
 private fun Modifier.clickableChip(onClick: () -> Unit): Modifier =
-    this.then(androidx.compose.foundation.clickable(onClick = onClick))
+    clickable(onClick = onClick)
 
 /** 用当前取景帧（无则色卡）套水印 */
 private fun buildWatermarkPreview(params: CameraParams): Bitmap {

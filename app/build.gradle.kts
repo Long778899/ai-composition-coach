@@ -97,6 +97,9 @@ dependencies {
     // EXIF 写入（拍摄参数落盘，参数调节闭环的最后一步）
     implementation("androidx.exifinterface:exifinterface:1.3.7")
 
+    // HEIC：Bitmap.CompressFormat 没有 HEIC，走系统 HEIF 编码器
+    implementation("androidx.heifwriter:heifwriter:1.1.0")
+
     // 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 

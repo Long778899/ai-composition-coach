@@ -305,16 +305,16 @@ class CameraController(
 // ── 映射工具 ────────────────────────────────────────────────
 
 /**
- * 画幅 → CameraX 的 targetAspectRatio。
+ * Maps the app aspect ratio to CameraX [androidx.camera.core.AspectRatio].
  *
- * CameraX 只认 4:3 / 16:9 / 1:1；3:4 是 4:3 的竖版，交给 rotation 处理，
- * 所以返回 null 表示"不指定，用默认 4:3"，避免传入非法枚举。
+ * CameraX only accepts 4:3 and 16:9. 1:1 and 3:4 return null so the
+ * use case stays on the default 4:3 sensor crop; [com.lemon.shotcoach.render.PhotoProcessor]
+ * center-crops the captured bitmap to the requested ratio.
  */
 internal fun AspectRatio.toCameraXAspectOrNull(): Int? = when (this) {
     AspectRatio.RATIO_4_3 -> androidx.camera.core.AspectRatio.RATIO_4_3
     AspectRatio.RATIO_16_9 -> androidx.camera.core.AspectRatio.RATIO_16_9
-    AspectRatio.RATIO_1_1 -> androidx.camera.core.AspectRatio.RATIO_1_1
-    AspectRatio.RATIO_3_4 -> null
+    AspectRatio.RATIO_1_1, AspectRatio.RATIO_3_4 -> null
 }
 
 internal fun FlashMode.toImageCaptureFlashMode(): Int = when (this) {

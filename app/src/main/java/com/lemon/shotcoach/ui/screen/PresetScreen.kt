@@ -1,6 +1,8 @@
 package com.lemon.shotcoach.ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -208,10 +210,8 @@ fun PresetScreen(
 }
 
 private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.then(
-        androidx.compose.foundation.clickable(
-            interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-            indication = null,
-            onClick = onClick,
-        ),
+    clickable(
+        interactionSource = MutableInteractionSource(),
+        indication = null,
+        onClick = onClick,
     )

@@ -1,6 +1,8 @@
 package com.lemon.shotcoach.ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -179,10 +181,8 @@ private data class GuidePage(
 
 /** 无涟漪点击：引导页按钮是实心块，涟漪会破坏干净感 */
 private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.then(
-        androidx.compose.foundation.clickable(
-            interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-            indication = null,
-            onClick = onClick,
-        ),
+    clickable(
+        interactionSource = MutableInteractionSource(),
+        indication = null,
+        onClick = onClick,
     )
