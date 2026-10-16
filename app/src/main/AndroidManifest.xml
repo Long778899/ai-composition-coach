@@ -11,9 +11,15 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.ShotCoach">
+        <!--
+          图标全部是矢量（drawable/ic_launcher_foreground.xml +
+          mipmap-anydpi-v26/ic_launcher.xml），项目里没有一个 PNG。
+          minSdk = 29 > 26，所以 anydpi-v26 一份即可覆盖所有目标设备。
+        -->
 
         <activity
             android:name=".MainActivity"

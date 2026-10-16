@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  启动图标（前景）。纯矢量，零 PNG 资产。
+  108×108 视口，图形收在中心约 54×54 的安全区内，避免被自适应图标裁掉。
+  造型与启动页一致：外环 + 内环 + 6 条光圈叶片 + 中心对焦十字。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 外环 r=27 -->
+    <path
+        android:pathData="M54,27 A27,27 0 1,1 53.9,27"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFC24B"
+        android:strokeWidth="3.5" />
+
+    <!-- 内环 r=17 -->
+    <path
+        android:pathData="M54,37 A17,17 0 1,1 53.9,37"
+        android:fillColor="#00000000"
+        android:strokeColor="#66FFC24B"
+        android:strokeWidth="2.5" />
+
+    <!-- 6 条光圈叶片（内环 → 外环），每 60° 一条 -->
+    <path
+        android:pathData="M71,54 L81,54 M62.5,68.7 L67.5,77.4 M45.5,68.7 L40.5,77.4 M37,54 L27,54 M45.5,39.3 L40.5,30.6 M62.5,39.3 L67.5,30.6"
+        android:fillColor="#00000000"
+        android:strokeColor="#BBFFC24B"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+
+    <!-- 中心对焦十字 -->
+    <path
+        android:pathData="M54,47 L54,61 M47,54 L61,54"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+</vector>
