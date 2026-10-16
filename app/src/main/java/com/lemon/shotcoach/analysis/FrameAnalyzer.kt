@@ -92,7 +92,11 @@ class FrameAnalyzer(
 
             // ── FR-2 降采样 ─────────────────────────────────
             val out = downScaler.scale(rgba)
-            Imgproc.cvtColor(out.mat, gray224, Imgproc.COLOR_RGBA2GRAY)
+            // 注意：用 out.content（去掉 letterbox 黑边的内容视图），绝不能用 out.mat。
+            // 黑边是纯 0 像素，参与直方图统计会被当成"欠曝像素"——
+            // 4:3 画幅占 25%、16:9 占 44%，直接超过 clipLowRatio 阈值 0.15，
+            // 结果"增加曝光"成为永远命中的建议。见 docs/CHANGELOG.md v1.0.1。
+            Imgproc.cvtColor(out.content, gray224, Imgproc.COLOR_RGBA2GRAY)
 
             // ── FR-3 曝光（快通道，每帧）──────────────────────
             val h = histogram.analyze(gray224)
@@ -115,15 +119,14 @@ class FrameAnalyzer(
             // ── FR-7 人脸（每 N 帧，独立 320 画布）────────────
             if (faceEnabled && throttler.dueFor(faceAnalyzer.cadence)) {
                 val fout = faceScaler.scale(rgba)
-                Imgproc.cvtColor(fout.mat, gray320, Imgproc.COLOR_RGBA2GRAY)
-                cachedFaces = faceAnalyzer.analyze(gray320).map { mapFaceRect(fout, it) }
+                Imgproc.cvtColor(fout.content, gray320, Imgproc.COLOR_RGBA2GRAY)
+                // 在内容视图上检测 → 返回的已是"画面归一化"坐标，无需再映射
+                cachedFaces = faceAnalyzer.analyze(gray320)
             }
 
             // ── 组装 FrameSignals（把所有坐标映射回归一化画面）──
-            val subject = cachedSaliency?.let {
-                val (x, y) = downScaler.toNormalized(it.cx * CANVAS, it.cy * CANVAS)
-                NormalizedPoint(x, y)
-            }
+            // 显著性在内容视图上计算 → cx/cy 已是相对画面内容的归一化坐标，直接用
+            val subject = cachedSaliency?.let { NormalizedPoint(it.cx, it.cy) }
 
             val raw = FrameSignals(
                 brightness = h.meanBrightness,
@@ -176,13 +179,6 @@ class FrameAnalyzer(
         } finally {
             throttler.endAnalysis()
         }
-    }
-
-    /** 把「人脸画布归一化矩形」映射为「真实画面归一化矩形」 */
-    private fun mapFaceRect(out: DownScaler.Output, r: NormalizedRect): NormalizedRect {
-        val (l, t) = faceScaler.toNormalized(r.left * FACE_CANVAS, r.top * FACE_CANVAS)
-        val (rr, b) = faceScaler.toNormalized(r.right * FACE_CANVAS, r.bottom * FACE_CANVAS)
-        return NormalizedRect(l, t, rr, b)
     }
 
     fun reset() {
