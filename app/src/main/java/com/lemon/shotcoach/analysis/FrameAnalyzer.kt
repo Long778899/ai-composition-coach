@@ -104,6 +104,7 @@ class FrameAnalyzer(
     private var cachedSharpness = 0f
     private var cachedSaliency: SaliencyAnalyzer.Result? = null
     private var cachedHorizon: Float? = null
+    private var cachedHorizonY: Float? = null
     private var cachedFaces: List<NormalizedRect> = emptyList()
     private var cachedFacesFromAi = false
 
@@ -177,7 +178,9 @@ class FrameAnalyzer(
 
             // ── FR-6 地平线（每 N 帧）────────────────────────
             if (throttler.dueFor(horizon.cadence)) {
-                cachedHorizon = horizon.analyze(gray224)
+                val hr = horizon.analyze(gray224)
+                cachedHorizon = hr?.angleDegrees
+                cachedHorizonY = hr?.y
             }
 
             // ── FR-7 人脸（每 N 帧，独立 320 画布）────────────
@@ -205,6 +208,7 @@ class FrameAnalyzer(
                 saliencyConcentration = cachedSaliency?.concentration ?: 0f,
                 rollDegrees = roll,
                 horizonDegrees = cachedHorizon,
+                horizonY = cachedHorizonY,
                 faces = cachedFaces,
                 sharpness = cachedSharpness,
                 timestampMs = nowMs,
@@ -267,6 +271,7 @@ class FrameAnalyzer(
         frameTimes.clear()
         cachedSaliency = null
         cachedHorizon = null
+        cachedHorizonY = null
         cachedFaces = emptyList()
         cachedFacesFromAi = false
         cachedSharpness = 0f

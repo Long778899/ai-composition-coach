@@ -32,7 +32,6 @@ class CompositionLogicTest {
         "hint_subject_down" to "把主体往下移一点",
         "hint_blur" to "可能失焦，稳住手机",
         "hint_face_small" to "靠近一点",
-        "hint_face_none" to "把主体放进画面里",
         "hint_good" to "构图不错，可以按了",
     )
 

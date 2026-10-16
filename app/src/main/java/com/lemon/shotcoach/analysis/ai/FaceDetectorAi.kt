@@ -17,8 +17,8 @@ import com.lemon.shotcoach.model.NormalizedRect
  *  - **ML Kit**：`app/build.gradle.kts` 里那行依赖被注释掉了 → 永远不可用；
  *  - **Haar 级联**：`assets/` 里没有 `haarcascade_frontalface_alt.xml` → 永远不可用。
  *
- * 结果是 `cachedFaces` 恒为空表，`R_FACE_SMALL`（priority 60）与 `R_FACE_NONE`（priority 40）
- * 两条规则**永不触发** —— 7 条内置规则实际只有 5 条活着。
+ * 结果是 `cachedFaces` 恒为空表，`R_FACE_SMALL`（priority 60）**永不触发**。
+ * （`R_FACE_NONE`(40) 已于 v1.1.1 删除 —— 它是人像中心设计，会把风景照永久判为"缺主体"。）
  *
  * 现在换成 MediaPipe BlazeFace：模型随 APK 打包（走 `tools/fetch-models.sh`），
  * 不依赖 Play 服务，冷启动后即可用。

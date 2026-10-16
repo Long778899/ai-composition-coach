@@ -24,6 +24,16 @@ data class CompositionScore(
     val worstAspect: Aspect?,
     /** 端侧 AI 美感分 0..100（由 NIMA 1..10 映射）。null = 未启用 AI 美感通道 */
     val aestheticScore: Int? = null,
+    /**
+     * 主体子项是否有实测依据。
+     *
+     * false = 本帧**没测到**主体（不是"主体构图很差"）。此时 [subjectScore] 不参与
+     * 加权与 [worstAspect] 评选，权重在其余子项之间重新归一化。
+     *
+     * v1.0 / v1.1.0 把"没测到"当成 60 分，于是主体恒为最差子项 → 规则引擎永远只放
+     * 主体类规则进场 → 拍风景时死循环提示"把主体放进画面里"。见 CHANGELOG v1.1.1。
+     */
+    val subjectKnown: Boolean = true,
 ) {
     enum class Aspect { SUBJECT, LEVEL, EXPOSURE, SHARPNESS, AESTHETIC }
 
