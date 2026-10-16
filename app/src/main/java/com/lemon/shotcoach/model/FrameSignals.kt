@@ -23,6 +23,13 @@ data class FrameSignals(
     val rollDegrees: Float = 0f,
     /** 视觉地平线倾角（度）。null = 本帧未计算或不可信 */
     val horizonDegrees: Float? = null,
+    /**
+     * 视觉地平线**高度**，归一化 0(画面顶) .. 1(画面底)。null = 本帧未计算或不可信。
+     *
+     * 与 [horizonDegrees]（倾角，用来校平）是两件事：这一项用来判断
+     * "地平线压在三分线上还是压在正中间"，是拍景物的核心构图指标。
+     */
+    val horizonY: Float? = null,
 
     /** 人脸框（归一化），按面积降序 */
     val faces: List<NormalizedRect> = emptyList(),
@@ -31,7 +38,8 @@ data class FrameSignals(
     val sharpness: Float = 0f,
 
     // ── 端侧 AI 通道（路径 1：真神经网络）─────────────────────────
-    // 全部带默认值：AI 未启用时本结构逐位等同于旧版，评分/规则/UI 行为不变。
+    // 全部带默认值：AI 未启用时本结构逐位等同于旧版，评分/规则/UI 行为不变
+    // （例外：主体测不到时主体子项退赛 —— 见 docs/CHANGELOG.md v1.1.1）。
     // 见 docs/ALGORITHMS.md §10。
 
     /** 端侧 AI 主体检测框（归一化）。null = 未启用 AI，或本帧未检出主体 */
@@ -68,10 +76,30 @@ data class FrameSignals(
     val hasAiSubject: Boolean get() = subjectBox != null
 
     /**
+     * 本帧**有没有"主体"这件事的依据**。
+     *
+     * 注意措辞：问的是"我们知不知道主体在哪"，**不是**"这张照片有没有主体"。
+     * 两者的区别是整个评分的根基：
+     *
+     *  - **AI 主体检测框**：模型测出来的 → 直接算依据。
+     *  - **显著性质心**：传统 CV 猜的，中心先验还把它往画面中央拉 → 只有集中度
+     *    够高（≥ [SALIENCY_CONCENTRATION_MIN]）才算依据。
+     *
+     * 两个都没有时返回 false，表示**我们不知道**。把"不知道"当成"主体构图只有 60 分"
+     * 会让主体项恒定成为最差子项，进而让规则引擎永远只说那一句话 ——
+     * 拍风景时的死循环"把主体放进画面里"就是这么来的（见 CHANGELOG v1.1.1）。
+     */
+    val subjectKnown: Boolean
+        get() = hasAiSubject || saliencyConcentration >= SALIENCY_CONCENTRATION_MIN
+
+    /**
      * 主体位置：**优先端侧 AI 的检测框中心**，没有 AI 时退回显著性质心。
      *
-     * 这是接入 AI 的关键收敛点：评分器、`SubjectOffRule`、`FaceNoneRule`、UI 全部读这一个字段。
+     * 这是接入 AI 的关键收敛点：评分器、`SubjectOffRule`、UI 全部读这一个字段。
      * 一处切换，全局从"猜"变成"测"——而 AI 关闭时它的返回值与旧的 [subject] 完全相同。
+     *
+     * 注意：这里**只回答"主体在哪"**。至于"到底有没有测到主体"，用 [subjectKnown] ——
+     * 两者缺一不可：本字段为 null 时既可能是"没有主体"，也可能是"没测到主体"。
      */
     val effectiveSubject: NormalizedPoint? get() = subjectBox?.center ?: subject
 
@@ -82,6 +110,16 @@ data class FrameSignals(
             if (aestheticScore != null) add(AiChannel.AESTHETIC)
             if (facesFromAi && faces.isNotEmpty()) add(AiChannel.FACE)
         }
+
+    companion object {
+        /**
+         * 显著性质心"可信"的最小集中度。
+         *
+         * 低于它说明画面本来就没什么重点（天空、白墙、纯色背景），
+         * 或者中心先验把质心拉到了画面中央 —— 两种情况都不该拿来当主体用。
+         */
+        const val SALIENCY_CONCENTRATION_MIN = 0.02f
+    }
 }
 
 /**

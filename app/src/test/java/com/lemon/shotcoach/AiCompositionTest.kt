@@ -11,6 +11,7 @@ import com.lemon.shotcoach.rules.AestheticLowRule
 import com.lemon.shotcoach.rules.SubjectOffRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,12 +37,13 @@ class AiCompositionTest {
         subject: NormalizedPoint? = null,
         subjectBox: NormalizedRect? = null,
         aestheticScore: Float? = null,
+        saliencyConcentration: Float = 0f,
     ) = FrameSignals(
         brightness = 130f,          // 理想亮度 → 曝光 100
         clipLowRatio = 0f,
         clipHighRatio = 0f,
         subject = subject,
-        saliencyConcentration = 0f,
+        saliencyConcentration = saliencyConcentration,
         rollDegrees = 0f,           // 水平 → 水平分 100
         horizonDegrees = null,
         faces = emptyList(),
@@ -61,25 +63,61 @@ class AiCompositionTest {
         bottom = thirdsY + 0.05f,
     )
 
-    // ── 1. 向后兼容 ──────────────────────────────────────────
+    // ── 1. 向后兼容（以及**一处有意的**不兼容）─────────────────
 
     @Test
-    fun `AI 关闭时总分与 v1_0 手算结果一致`() {
-        // 无主体 → 主体分兜底 60；曝光/水平/清晰度全满
-        val s = perfectBase()
-        val score = CompositionScorer.score(s)
+    fun `主体可测时权重仍是 40_25_20_15 且总分与 v1_0 一致`() {
+        // 主体**可测**（集中度够高）且正好落在三分点 → 四路全满
+        val score = CompositionScorer.score(
+            perfectBase(subject = NormalizedPoint(1f / 3f, 1f / 3f), saliencyConcentration = 0.2f),
+        )
 
-        // 60*0.40 + 100*0.25 + 100*0.20 + 100*0.15 = 24 + 25 + 20 + 15 = 84
-        assertEquals(84, score.total)
+        assertTrue(score.subjectKnown)
+        assertEquals(100, score.subjectScore)
+        // 100*0.40 + 100*0.25 + 100*0.20 + 100*0.15 = 100
+        assertEquals(100, score.total)
         assertNull("AI 未启用时美感分必须为 null", score.aestheticScore)
-        assertEquals(60, score.subjectScore)
+    }
+
+    @Test
+    fun `主体未测到时按剩余权重归一化 而不是兜底 60 分`() {
+        // 集中度 0 → 按定义"没测到主体"（不是"主体很差"）
+        val score = CompositionScorer.score(perfectBase())
+
+        assertFalse(score.subjectKnown)
+        assertEquals("展示分仍在（HUD 靠 subjectKnown 决定打 —）", 60, score.subjectScore)
+        // 只按 水平/曝光/清晰度 归一化：(100*0.25 + 100*0.20 + 100*0.15) / 0.60 = 100
+        assertEquals(100, score.total)
+    }
+
+    /**
+     * 这条测试记录的是**故意的行为变更**（v1.1.1）。
+     *
+     *  - v1.0 / v1.1.0：无主体 → 主体分兜底 60 → 计入加权
+     *    → total = 60*0.40 + 100*0.25 + 100*0.20 + 100*0.15 = **84**
+     *  - v1.1.1：主体退赛 + 权重归一化 → total = **100**
+     *
+     * 那个 60 分就是"拍景物时永远提示把主体放进画面里"的根因，
+     * 所以这里**不再**要求与 v1.0 逐位一致。回归网见 [LandscapeCompositionTest]。
+     */
+    @Test
+    fun `主体未测到时不再计入 60 分兜底（有意的行为变更）`() {
+        assertEquals(100, CompositionScorer.score(perfectBase()).total)
     }
 
     @Test
     fun `AI 关闭时审美维度不参与最差子项评选`() {
         val score = CompositionScorer.score(perfectBase())
-        // 四路子项里最差的是主体(60)，AESTHETIC 不该冒出来
-        assertEquals(CompositionScore.Aspect.SUBJECT, score.worstAspect)
+        assertNotEquals(
+            "主体未测到时不得成为最差子项（这正是死循环的成因）",
+            CompositionScore.Aspect.SUBJECT,
+            score.worstAspect,
+        )
+        assertNotEquals(
+            "美感通道未启用，AESTHETIC 不该冒出来",
+            CompositionScore.Aspect.AESTHETIC,
+            score.worstAspect,
+        )
     }
 
     @Test

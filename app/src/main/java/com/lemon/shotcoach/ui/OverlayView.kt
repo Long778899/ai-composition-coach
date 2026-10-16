@@ -108,6 +108,26 @@ fun OverlayView(
                 }
             }
 
+            // ── 地平线（拍景物的核心构图元素，v1.1.1 新增）────────
+            //
+            // 只在真的检出可信地平线时才画。两端留缺口是有意的：
+            // 一条通到底的细线看着像 UI 分割线，带缺口才像"我测出来的东西"。
+            //
+            // 对拍风景的意义：肉眼很难判断地平线到底压在画面的几分之几，
+            // 画出来比嘴上说"往上抬一点"有效得多。
+            state.horizonY?.let { hy ->
+                if (guide) {
+                    val y = hy * h
+                    val inset = w * 0.07f
+                    drawLine(
+                        color = Color(0xFFFFB300).copy(alpha = 0.7f),
+                        start = Offset(inset, y),
+                        end = Offset(w - inset, y),
+                        strokeWidth = 1.5.dp.toPx(),
+                    )
+                }
+            }
+
             // ── 主体指示（端侧 AI 检测框优先，否则退回显著性质心）──
             if (guide) {
                 val box = state.subjectBox
@@ -188,7 +208,7 @@ fun OverlayView(
                 "\nAI: " + state.aiChannels.joinToString("+") { it.label() }
             }
             Text(
-                text = "分 ${s.total} · 主 ${s.subjectScore} 平 ${s.levelScore} " +
+                text = "分 ${s.total} · 主 ${if (s.subjectKnown) s.subjectScore.toString() else "—"} 平 ${s.levelScore} " +
                     "曝 ${s.exposureScore} 清 ${s.sharpnessScore}" +
                     (aesthetic?.let { "\n美感 $it (NIMA)" } ?: "") +
                     "\n%.1f fps · %.1f ms".format(state.fps, state.latencyMs) +

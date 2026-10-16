@@ -28,6 +28,17 @@ data class UiState(
     val subjectLabel: String = "",
     /** 本帧确实跑了神经网络的通道（UI 角标/诊断用，见 [AiChannel]） */
     val aiChannels: Set<AiChannel> = emptySet(),
+    /**
+     * 视觉地平线高度，归一化 0(画面顶)..1(画面底)。null = 本帧未检出可信地平线。
+     *
+     * v1.1.1 新增。存在两个用途：
+     *  1. 引导模式下把**测到的地平线**画出来 —— 拍风景时肉眼很难判断它到底压在
+     *     几分之几，画出来比说"往上抬一点"有效得多；
+     *  2. 与 [Hint.Direction] 配合，让"地平线往上抬/往下压"这句话有据可依。
+     *
+     * 注意与 [rollDegrees] 的区别：那个是**倾斜**（用来校平），这个是**高度**（用来构图）。
+     */
+    val horizonY: Float? = null,
     /** 平滑后的水平倾角 */
     val rollDegrees: Float = 0f,
     val faceRects: List<NormalizedRect> = emptyList(),
