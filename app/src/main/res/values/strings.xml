@@ -16,4 +16,6 @@
     <string name="hint_face_none">把主体放进画面里</string>
     <string name="hint_blur">可能失焦，稳住手机</string>
     <string name="hint_good">构图不错，可以按了</string>
+    <!-- 端侧 AI 美感分偏低（NIMA &lt; 5.0/10）—— 唯一由神经网络直接驱动的建议 -->
+    <string name="hint_aesthetic_low">试试换个角度或简化背景</string>
 </resources>

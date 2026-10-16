@@ -28,33 +28,47 @@ class DownScaler(private val targetLongSide: Int = 224) {
         val contentRect: Rect,
         /** 原图 → 目标图的缩放比 */
         val scale: Float,
+        /**
+         * **去掉黑边的内容视图**（即 [mat] 上的 [contentRect] 子矩阵，跨帧复用、不额外分配）。
+         *
+         * 像素统计类分析器（直方图 / 清晰度 / 地平线 / 显著性）**必须**用它，绝不能用 [mat]：
+         * letterbox 黑边是纯 0 像素，在直方图里会被算成"欠曝像素"——
+         * 4:3 画幅黑边占 25%、16:9 占 44%，直接超过 `clipLowRatio` 阈值 0.15，
+         * 结果是"增加曝光"成为永远命中的建议（见 docs/CHANGELOG.md v1.0.1）。
+         */
+        val content: Mat,
     )
 
     fun scale(src: Mat): Output {
         val w = src.cols()
         val h = src.rows()
-        if (w == 0 || h == 0) return Output(src, Rect(0, 0, 0, 0), 1f)
+        if (w == 0 || h == 0) return Output(src, Rect(0, 0, 0, 0), 1f, src)
 
         val ratio = targetLongSide.toFloat() / maxOf(w, h)
         val nw = (w * ratio).toInt().coerceAtLeast(1)
         val nh = (h * ratio).toInt().coerceAtLeast(1)
 
-        val out = dst ?: Mat().also { dst = it }
         // 全画布（targetLongSide × targetLongSide）
-        if (out.empty() || out.cols() != targetLongSide || out.rows() != targetLongSide) {
-            out.create(Size(targetLongSide.toDouble(), targetLongSide.toDouble()), src.type())
+        val out = dst?.takeIf {
+            !it.empty() && it.cols() == targetLongSide &&
+                it.rows() == targetLongSide && it.type() == src.type()
+        } ?: Mat().also {
+            it.create(Size(targetLongSide.toDouble(), targetLongSide.toDouble()), src.type())
+            dst = it
+            roi = null          // 数据缓冲已重建，旧的内容视图失效
         }
         out.setTo(org.opencv.core.Scalar(0.0))   // 黑边
 
-        // 居中 letterbox（roi 复用，避免每帧新建 Mat 视图）
+        // 居中 letterbox（内容视图复用，避免每帧新建 Mat 视图）
         val x = (targetLongSide - nw) / 2
         val y = (targetLongSide - nh) / 2
-        val r = roi ?: out.submat(Rect(x, y, nw, nh)).also { roi = it }
+        val r = roi?.takeIf { it.width() == nw && it.height() == nh }
+            ?: out.submat(Rect(x, y, nw, nh)).also { roi = it }
         Imgproc.resize(src, r, Size(nw.toDouble(), nh.toDouble()), 0.0, 0.0, Imgproc.INTER_AREA)
 
         letterbox = Rect(x, y, nw, nh)
         scale = ratio
-        return Output(out, letterbox, ratio)
+        return Output(out, letterbox, ratio, r)
     }
 
     /**

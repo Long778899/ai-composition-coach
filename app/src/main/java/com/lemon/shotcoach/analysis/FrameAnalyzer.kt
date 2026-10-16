@@ -1,5 +1,6 @@
 package com.lemon.shotcoach.analysis
 
+import com.lemon.shotcoach.analysis.ai.AiPipeline
 import com.lemon.shotcoach.analysis.analyzer.FaceAnalyzer
 import com.lemon.shotcoach.analysis.analyzer.HistogramAnalyzer
 import com.lemon.shotcoach.analysis.analyzer.HorizonAnalyzer
@@ -26,6 +27,19 @@ import java.util.ArrayDeque
  *  - 快通道（每帧）：曝光、水平仪（传感器在别处）、清晰度
  *  - 慢通道（每 N 帧）：显著性、地平线、人脸 —— 结果缓存，帧间复用
  *
+ * ## v1.1：端侧 AI 通道（路径 1，真神经网络）
+ *
+ * [ai] 非空时启用三路神经网络推理（主体检测 / 人脸检测 / 美感评分）。
+ * 它与传统 CV 是**替换关系而非叠加关系**：
+ *
+ * | 能力 | 有 AI | 无 AI（模型缺失或未接入） |
+ * |---|---|---|
+ * | 主体位置 | EfficientDet-Lite0 检测框中心（**测**出来的） | 显著性质心（**猜**的，偏中心） |
+ * | 人脸 | BlazeFace（**可用**） | Haar 级联（assets 无 XML → 恒空，v1.0 遗留问题） |
+ * | 美感 | NIMA 直接给 1..10 分（**唯一模型给分项**） | 无此维度，权重退回 v1.0 |
+ *
+ * 因此 `ai == null` 时本类行为与 v1.0 **逐位一致**，JVM 单测无需任何 Android 依赖。
+ *
  * 非线程安全：由 CameraX 的分析 Executor **单线程**持有（见 ARCHITECTURE §2）。
  */
 class FrameAnalyzer(
@@ -36,6 +50,12 @@ class FrameAnalyzer(
     dwellMs: Long = 800L,
     /** 人脸通道开关。关掉可省约 2ms/帧（见设置页）。 */
     private val faceEnabled: Boolean = true,
+    /**
+     * 端侧 AI 管线（可选）。null = 纯传统 CV，行为与 v1.0 完全一致。
+     *
+     * **生命周期由本类负责**：`release()` 会连带 [AiPipeline.close]。调用方不要再关一次。
+     */
+    private val ai: AiPipeline? = null,
 ) {
     /**
      * 叠加层配置，由 UI 线程写入、分析线程读取，随每帧 [UiState] 一并带出。
@@ -50,6 +70,18 @@ class FrameAnalyzer(
     companion object {
         const val CANVAS = 224
         const val FACE_CANVAS = 320
+
+        /** AI 主体检测节奏（每 3 帧一次；EfficientDet-Lite0 int8 ≈ 8~20ms） */
+        const val AI_SUBJECT_CADENCE = 3
+
+        /** AI 人脸检测节奏（每 2 帧一次；BlazeFace ≈ 3ms，很便宜可以勤跑） */
+        const val AI_FACE_CADENCE = 2
+
+        /**
+         * AI 美感评分节奏（每 5 帧一次；NIMA ≈ 18ms，是三者里最贵的）。
+         * 压到最慢是刻意的：美感是**慢变量**，半秒更新一次完全够用，不该抢算力。
+         */
+        const val AI_AESTHETIC_CADENCE = 5
     }
 
     private val downScaler = DownScaler(CANVAS)
@@ -73,6 +105,11 @@ class FrameAnalyzer(
     private var cachedSaliency: SaliencyAnalyzer.Result? = null
     private var cachedHorizon: Float? = null
     private var cachedFaces: List<NormalizedRect> = emptyList()
+    private var cachedFacesFromAi = false
+
+    // 端侧 AI 缓存（跨抽帧复用，语义见各字段注释）
+    private var cachedAiSubject: com.lemon.shotcoach.analysis.ai.SubjectDetector.Detection? = null
+    private var cachedAesthetic: Float? = null
 
     // FPS / 延迟统计
     private val frameTimes = ArrayDeque<Long>()
@@ -92,7 +129,11 @@ class FrameAnalyzer(
 
             // ── FR-2 降采样 ─────────────────────────────────
             val out = downScaler.scale(rgba)
-            Imgproc.cvtColor(out.mat, gray224, Imgproc.COLOR_RGBA2GRAY)
+            // 注意：用 out.content（去掉 letterbox 黑边的内容视图），绝不能用 out.mat。
+            // 黑边是纯 0 像素，参与直方图统计会被当成"欠曝像素"——
+            // 4:3 画幅占 25%、16:9 占 44%，直接超过 clipLowRatio 阈值 0.15，
+            // 结果"增加曝光"成为永远命中的建议。见 docs/CHANGELOG.md v1.0.1。
+            Imgproc.cvtColor(out.content, gray224, Imgproc.COLOR_RGBA2GRAY)
 
             // ── FR-3 曝光（快通道，每帧）──────────────────────
             val h = histogram.analyze(gray224)
@@ -102,8 +143,35 @@ class FrameAnalyzer(
                 cachedSharpness = sharpness.analyze(gray224)
             }
 
-            // ── FR-5 显著性（每 N 帧）────────────────────────
-            if (throttler.dueFor(saliency.cadence)) {
+            // ── 端侧 AI 通道（路径 1：真神经网络）─────────────
+            // 模型缺失时 ai 内部 available 全为 false → 三个 want 恒为 false →
+            // 整块零成本跳过，管线自动退回纯 CV。这条降级路径是刻意的（见 ALGORITHMS §10）。
+            val wantSubject = ai?.subjectAvailable == true && throttler.dueFor(AI_SUBJECT_CADENCE)
+            val wantFace = ai?.faceAvailable == true && faceEnabled && throttler.dueFor(AI_FACE_CADENCE)
+            val wantAesthetic = ai?.aestheticAvailable == true && throttler.dueFor(AI_AESTHETIC_CADENCE)
+
+            val aiResult = if (wantSubject || wantFace || wantAesthetic) {
+                ai?.analyze(rgba, wantSubject, wantFace, wantAesthetic)
+            } else {
+                null
+            }
+
+            if (wantSubject) {
+                // 多目标取面积最大者当主体（近大远小）；本帧未检出则清空 → 框自然消失
+                cachedAiSubject = aiResult?.detections?.maxByOrNull { it.areaRatio }
+            }
+            if (wantFace) {
+                cachedFaces = aiResult?.faces.orEmpty()
+                cachedFacesFromAi = true
+            }
+            if (wantAesthetic) {
+                aiResult?.aestheticScore?.let { cachedAesthetic = it }
+            }
+
+            // ── FR-5 主体（每 N 帧）──────────────────────────
+            // 有端侧 AI 主体检测时显著性退居备胎：只在 AI 不可用才跑，
+            // 省下 Sobel + 中心先验的开销（v1.0 那套伪显著性本就算不准）。
+            if (ai?.subjectAvailable != true && throttler.dueFor(saliency.cadence)) {
                 cachedSaliency = saliency.analyze(gray224)
             }
 
@@ -113,29 +181,39 @@ class FrameAnalyzer(
             }
 
             // ── FR-7 人脸（每 N 帧，独立 320 画布）────────────
-            if (faceEnabled && throttler.dueFor(faceAnalyzer.cadence)) {
+            // AI 人脸可用时不再跑 Haar（Haar 是 v1.0 的遗留回退路径）
+            if (faceEnabled && ai?.faceAvailable != true && throttler.dueFor(faceAnalyzer.cadence)) {
                 val fout = faceScaler.scale(rgba)
-                Imgproc.cvtColor(fout.mat, gray320, Imgproc.COLOR_RGBA2GRAY)
-                cachedFaces = faceAnalyzer.analyze(gray320).map { mapFaceRect(fout, it) }
+                Imgproc.cvtColor(fout.content, gray320, Imgproc.COLOR_RGBA2GRAY)
+                // 在内容视图上检测 → 返回的已是"画面归一化"坐标，无需再映射
+                cachedFaces = faceAnalyzer.analyze(gray320)
+                cachedFacesFromAi = false
             }
 
             // ── 组装 FrameSignals（把所有坐标映射回归一化画面）──
-            val subject = cachedSaliency?.let {
-                val (x, y) = downScaler.toNormalized(it.cx * CANVAS, it.cy * CANVAS)
-                NormalizedPoint(x, y)
-            }
+            // 显著性在内容视图上计算 → cx/cy 已是相对画面内容的归一化坐标，直接用
+            val aiDet = cachedAiSubject
+            val subjectPoint: NormalizedPoint? = aiDet
+                ?.let { NormalizedPoint(it.centerX, it.centerY) }
+                ?: cachedSaliency?.let { NormalizedPoint(it.cx, it.cy) }
 
             val raw = FrameSignals(
                 brightness = h.meanBrightness,
                 clipLowRatio = h.clipLowRatio,
                 clipHighRatio = h.clipHighRatio,
-                subject = subject,
+                subject = subjectPoint,
                 saliencyConcentration = cachedSaliency?.concentration ?: 0f,
                 rollDegrees = roll,
                 horizonDegrees = cachedHorizon,
                 faces = cachedFaces,
                 sharpness = cachedSharpness,
                 timestampMs = nowMs,
+                // 端侧 AI 通道
+                subjectBox = aiDet?.let { NormalizedRect(it.left, it.top, it.right, it.bottom) },
+                subjectLabel = aiDet?.label.orEmpty(),
+                subjectConfidence = aiDet?.score ?: 0f,
+                facesFromAi = cachedFacesFromAi,
+                aestheticScore = cachedAesthetic,
             )
 
             // ── FR-10 平滑 ──────────────────────────────────
@@ -162,6 +240,9 @@ class FrameAnalyzer(
                 hint = hint,
                 score = score,
                 subjectPoint = smoothed.subject,
+                subjectBox = smoothed.subjectBox,
+                subjectLabel = smoothed.subjectLabel,
+                aiChannels = smoothed.aiChannels,
                 rollDegrees = smoothed.effectiveRoll,
                 faceRects = smoothed.faces,
                 fps = fps,
@@ -178,13 +259,6 @@ class FrameAnalyzer(
         }
     }
 
-    /** 把「人脸画布归一化矩形」映射为「真实画面归一化矩形」 */
-    private fun mapFaceRect(out: DownScaler.Output, r: NormalizedRect): NormalizedRect {
-        val (l, t) = faceScaler.toNormalized(r.left * FACE_CANVAS, r.top * FACE_CANVAS)
-        val (rr, b) = faceScaler.toNormalized(r.right * FACE_CANVAS, r.bottom * FACE_CANVAS)
-        return NormalizedRect(l, t, rr, b)
-    }
-
     fun reset() {
         throttler.reset()
         smoother.reset()
@@ -194,7 +268,10 @@ class FrameAnalyzer(
         cachedSaliency = null
         cachedHorizon = null
         cachedFaces = emptyList()
+        cachedFacesFromAi = false
         cachedSharpness = 0f
+        cachedAiSubject = null
+        cachedAesthetic = null
     }
 
     fun release() {
@@ -202,6 +279,8 @@ class FrameAnalyzer(
         faceScaler.release()
         gray224.release()
         gray320.release()
+        // AI 管线生命周期归本类所有（见构造参数 ai 的说明）
+        ai?.close()
     }
 
     /** 供调试/测试：Android Bitmap → RGBA Mat */

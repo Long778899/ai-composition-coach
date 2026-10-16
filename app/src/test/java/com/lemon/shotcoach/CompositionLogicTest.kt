@@ -176,4 +176,35 @@ class CompositionLogicTest {
         assertTrue(score.total in 0..100)
         assertNull(hint?.takeIf { it.id == "R_GOOD" })   // 空画面不可能满分
     }
+
+    // ── 回归：曝光规则不得恒命中（v1.0.1）──────────────────
+
+    private val exposeIds = setOf("R_EXPOSE_LOW", "R_EXPOSE_HIGH")
+
+    @Test
+    fun `曝光正常且无裁剪时不应给出曝光建议`() {
+        // 真实画面的正确统计值：平均亮度 130、欠曝/过曝裁剪均为 0
+        val s = good().copy(brightness = 130f, clipLowRatio = 0f, clipHighRatio = 0f)
+        val hint = engine().best(s, CompositionScorer.score(s), 0L)
+        assertTrue("不该是曝光提示，实际=${hint?.id}", hint == null || hint.id !in exposeIds)
+    }
+
+    @Test
+    fun `欠曝裁剪超阈值时才给出增加曝光`() {
+        val s = good().copy(brightness = 40f, clipLowRatio = 0.3f)
+        assertEquals("R_EXPOSE_LOW", engine().best(s, CompositionScorer.score(s), 0L)?.id)
+    }
+
+    @Test
+    fun `计入黑边会把正常画面误判成欠曝`() {
+        // 复现 v1.0.1 之前的 bug：4:3 画幅下 25% 的像素是补的黑边（灰度 0）
+        // → clipLowRatio≈0.25 > CLIP_RATIO(0.15) → 曝光规则恒命中、压过其它建议。
+        // 修复方式是像素统计只走 DownScaler 的 content 视图（即下面 clean 的输入）。
+        val polluted = good().copy(clipLowRatio = 0.25f)   // 含黑边的统计值（错误）
+        val clean = good().copy(clipLowRatio = 0f)         // 去黑边后的统计值（正确）
+
+        assertEquals("R_EXPOSE_LOW", engine().best(polluted, CompositionScorer.score(polluted), 0L)?.id)
+        val h = engine().best(clean, CompositionScorer.score(clean), 0L)
+        assertTrue("去黑边后不该再报欠曝，实际=${h?.id}", h == null || h.id !in exposeIds)
+    }
 }

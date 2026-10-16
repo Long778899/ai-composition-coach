@@ -19,6 +19,10 @@ class SharpnessAnalyzer {
     val cadence = 3
 
     private val lap = Mat()
+
+    // Core.meanStdDev 的 Java 签名要求 MatOfDouble（不是 Mat）。
+    // v1.0 这里写成了 Mat —— 仓库从没编译过，所以这个类型错误一直没暴露。
+    // 2026-10 引入真 Kotlin 编译器做校验时才发现并修掉。
     private val mean = MatOfDouble()
     private val stddev = MatOfDouble()
 

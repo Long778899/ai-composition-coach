@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# ── 端侧 AI 模型权重（v1.1）──────────────────────────────
+# 第三方预训练二进制，体积 0.2~6.4MB，不进仓库。
+# 用 ./tools/fetch-models.sh 拉到 app/src/main/assets/ 后随 APK 走。
+# 缺失时 App 自动退回纯传统 CV（行为同 v1.0），不影响构建。
+app/src/main/assets/*.tflite
