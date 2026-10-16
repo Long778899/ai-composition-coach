@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lemon.shotcoach.camera.GridStyle
 import com.lemon.shotcoach.model.Hint
 import com.lemon.shotcoach.model.UiState
 import kotlin.math.abs
@@ -50,47 +51,64 @@ fun OverlayView(
             // ── 网格线 ────────────────────────────────────
             val gridColor = Color.White.copy(alpha = 0.28f)
             val stroke = 1.dp.toPx()
-            when (state.gridStyle) {
-                UiState.GridStyle.THIRDS -> {
-                    for (f in listOf(1f / 3f, 2f / 3f)) {
-                        drawLine(gridColor, Offset(w * f, 0f), Offset(w * f, h), stroke)
-                        drawLine(gridColor, Offset(0f, h * f), Offset(w, h * f), stroke)
+            if (state.gridEnabled) {
+                when (state.gridStyle) {
+                    GridStyle.OFF -> Unit
+                    GridStyle.THIRDS -> {
+                        for (f in listOf(1f / 3f, 2f / 3f)) {
+                            drawLine(gridColor, Offset(w * f, 0f), Offset(w * f, h), stroke)
+                            drawLine(gridColor, Offset(0f, h * f), Offset(w, h * f), stroke)
+                        }
                     }
-                }
-                UiState.GridStyle.GOLDEN -> {
-                    for (f in listOf(0.382f, 0.618f)) {
-                        drawLine(gridColor, Offset(w * f, 0f), Offset(w * f, h), stroke)
-                        drawLine(gridColor, Offset(0f, h * f), Offset(w, h * f), stroke)
+                    GridStyle.GOLDEN -> {
+                        for (f in listOf(0.382f, 0.618f)) {
+                            drawLine(gridColor, Offset(w * f, 0f), Offset(w * f, h), stroke)
+                            drawLine(gridColor, Offset(0f, h * f), Offset(w, h * f), stroke)
+                        }
                     }
-                }
-                UiState.GridStyle.CROSS -> {
-                    drawLine(gridColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
-                    drawLine(gridColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                    GridStyle.CENTER -> {
+                        drawLine(gridColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
+                        drawLine(gridColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                    }
+                    GridStyle.DIAGONAL -> {
+                        // 对角线构图参考：角到角 + 中心十字（弱化，避免压过主体）
+                        val diag = gridColor.copy(alpha = 0.18f)
+                        drawLine(diag, Offset(0f, 0f), Offset(w, h), stroke)
+                        drawLine(diag, Offset(w, 0f), Offset(0f, h), stroke)
+                        drawLine(gridColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
+                        drawLine(gridColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                    }
                 }
             }
 
             // ── 水平基准线：|roll| < 1° 变绿 ────────────────
-            val level = abs(state.rollDegrees) < 1f
-            val levelColor = if (level) Color(0xFF4CD964) else Color(0xFFFFD54F)
-            drawLine(
-                color = levelColor.copy(alpha = 0.9f),
-                start = Offset(0f, h / 2f),
-                end = Offset(w, h / 2f),
-                strokeWidth = if (level) 3.dp.toPx() else 2.dp.toPx(),
-            )
-
-            // ── 人脸框 ───────────────────────────────────
-            for (f in state.faceRects) {
-                drawRect(
-                    color = Color(0xFF4CD964).copy(alpha = 0.85f),
-                    topLeft = Offset(f.left * w, f.top * h),
-                    size = Size(f.width * w, f.height * h),
-                    style = Stroke(width = 2.dp.toPx()),
+            if (state.levelEnabled) {
+                val level = abs(state.rollDegrees) < 1f
+                val levelColor = if (level) Color(0xFF4CD964) else Color(0xFFFFD54F)
+                drawLine(
+                    color = levelColor.copy(alpha = 0.9f),
+                    start = Offset(0f, h / 2f),
+                    end = Offset(w, h / 2f),
+                    strokeWidth = if (level) 3.dp.toPx() else 2.dp.toPx(),
                 )
             }
 
+            val guide = state.guideEnabled
+
+            // ── 人脸框 ───────────────────────────────────
+            if (guide) {
+                for (f in state.faceRects) {
+                    drawRect(
+                        color = Color(0xFF4CD964).copy(alpha = 0.85f),
+                        topLeft = Offset(f.left * w, f.top * h),
+                        size = Size(f.width * w, f.height * h),
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
+            }
+
             // ── 主体指示框（显著性定位）────────────────────
-            state.subjectPoint?.let { p ->
+            if (guide) state.subjectPoint?.let { p ->
                 val cx = p.x * w
                 val cy = p.y * h
                 drawCircle(
@@ -107,7 +125,7 @@ fun OverlayView(
             }
 
             // ── 方向箭头 ─────────────────────────────────
-            state.hint?.let { h2 ->
+            if (guide) state.hint?.let { h2 ->
                 if (h2.direction != Hint.Direction.NONE && hintAlpha > 0.01f) {
                     drawDirectionArrow(h2.direction, w, h, hintAlpha)
                 }
@@ -115,7 +133,7 @@ fun OverlayView(
         }
 
         // ── 提示文案 ─────────────────────────────────────
-        state.hint?.let { h2 ->
+        if (state.guideEnabled) state.hint?.let { h2 ->
             Text(
                 text = h2.text,
                 color = Color.White,
@@ -129,8 +147,8 @@ fun OverlayView(
             )
         }
 
-        // ── 开发者 HUD ───────────────────────────────────
-        state.score?.let { s ->
+        // ── 评分 HUD（默认关，设置里可开）─────────────────
+        if (state.scoreEnabled) state.score?.let { s ->
             Text(
                 text = "分 ${s.total} · 主 ${s.subjectScore} 平 ${s.levelScore} " +
                     "曝 ${s.exposureScore} 清 ${s.sharpnessScore}\n" +

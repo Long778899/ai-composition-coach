@@ -48,13 +48,17 @@
 
 ```
 app/src/main/java/com/lemon/shotcoach/
-├── MainActivity.kt                 # 入口 + Compose 宿主
+├── MainActivity.kt                 # 入口（只做 OpenCV 初始化 + 挂导航图）
 ├── camera/
-│   ├── CameraController.kt         # CameraX 封装
+│   ├── CameraParams.kt             # 全部可调参数的单一数据源（含各枚举/范围常量）
+│   ├── CameraParamController.kt    # 参数下发（EV / 变焦 / ISO / 快门 / 白平衡 / 对焦 / 常亮）
+│   ├── CameraController.kt         # CameraX 封装：取帧 → Mat → 分析；含 ImageCapture
+│   ├── CaptureController.kt        # 拍照：定时 / 连拍 / 快门音 / 全链路处理
+│   ├── FilterCatalog.kt            # 滤镜目录（描述为色彩参数，非素材）
 │   ├── FrameThrottler.kt           # 抽帧（FR-1）
 │   └── DownScaler.kt               # 降采样（FR-2）
 ├── analysis/
-│   ├── FrameAnalyzer.kt            # 分析管线调度（快慢通道）
+│   ├── FrameAnalyzer.kt            # 分析管线调度（快慢通道 + 叠加层配置）
 │   ├── CompositionScorer.kt        # 构图评分（FR-9）
 │   ├── EmaSmoother.kt              # 时间平滑（FR-10）
 │   └── analyzer/
@@ -64,22 +68,95 @@ app/src/main/java/com/lemon/shotcoach/
 │       ├── HorizonAnalyzer.kt      # 地平线（FR-6）
 │       ├── FaceAnalyzer.kt         # 人脸（FR-7）
 │       └── SharpnessAnalyzer.kt    # 清晰度（FR-8）
+├── filter/                         # 滤镜引擎（零 LUT 素材）
+│   ├── Lut3D.kt                    # 3D 查找表 + 三线性采样
+│   ├── LutBuilder.kt               # 色彩参数 → LUT 烘焙（纯 Kotlin）
+│   ├── CpuLutApplier.kt            # 查表应用（快查表 / 三线性两条路径）
+│   ├── LutExporter.kt              # 导出 Adobe .cube
+│   ├── FilterEngine.kt             # 门面 + 缩略图/预览
+│   ├── SwatchPattern.kt            # 程序化色卡（缩略图兜底）
+│   └── ColorTemp.kt                # 色温 → RGB 增益
+├── render/                         # 成片合成（全代码绘制）
+│   ├── BorderCatalog.kt            # 边框目录
+│   ├── BorderRenderer.kt           # 边框绘制（7 种）
+│   ├── WatermarkRenderer.kt        # 水印绘制
+│   └── PhotoProcessor.kt           # 镜像 → 滤镜 → 水印 → 边框 → 保存
 ├── rules/
 │   ├── Rule.kt                     # 规则接口
 │   ├── RuleEngine.kt               # 引擎（FR-11）
 │   └── BuiltinRules.kt             # 内置规则集
+├── data/
+│   ├── SettingsRepository.kt       # 参数 + 偏好的持久化入口
+│   ├── CameraParamsCodec.kt        # 参数编解码（纯 Kotlin，可单测）
+│   ├── MediaStoreSaver.kt          # 写入系统相册（无需存储权限）
+│   ├── MediaQuery.kt               # 相册查询 / 缩略图 / 原图
+│   ├── PreviewFrameStore.kt        # 取景帧共享（供滤镜/边框/水印实时预览）
+│   └── TextFileSaver.kt            # 导出 .cube / 预设文本
 ├── model/
 │   ├── Geometry.kt                 # 归一化点 / 矩形 / 三分法
 │   ├── FrameSignals.kt             # 原始信号（分析层 ↔ 领域层契约）
 │   ├── CompositionScore.kt         # 评分模型
 │   ├── Hint.kt                     # 提示模型
-│   └── UiState.kt                  # UI 状态
+│   └── UiState.kt                  # UI 状态 + OverlayConfig
 └── ui/
-    └── OverlayView.kt              # 取景叠加层（FR-12）
+    ├── OverlayView.kt              # 取景叠加层（FR-12）
+    ├── theme/Theme.kt              # 暗色主题与配色
+    ├── component/
+    │   ├── CommonComponents.kt     # 面板/标题/滑杆/开关/跳转行等基础件
+    │   ├── ParamPanel.kt           # 参数调节面板（20+ 可调项）
+    │   ├── FilterStrip.kt          # 滤镜条（实时缩略图 + 强度）
+    │   └── BorderStrip.kt          # 边框条（实时缩略图）
+    ├── nav/AppNavHost.kt           # 路由表 + 导航图
+    └── screen/
+        ├── SplashScreen.kt         # 启动页（矢量光圈动画）
+        ├── GuideScreen.kt          # 首次引导
+        ├── CameraScreen.kt         # 取景主页面（快捷条/变焦/滤镜条/快门）
+        ├── FilterScreen.kt         # 滤镜页（实时预览 + 导出 .cube）
+        ├── BorderScreen.kt         # 边框页
+        ├── WatermarkScreen.kt      # 水印页（时间戳实时走动）
+        ├── SettingsScreen.kt       # 设置（分析调参 / 拍摄 / 格式）
+        ├── GalleryScreen.kt        # 相册（仅本应用照片，无需读取权限）
+        ├── PresetScreen.kt         # 参数预设
+        └── AboutScreen.kt          # 关于与隐私
 
 app/src/main/assets/README.md       # 人脸级联文件获取说明
 app/src/test/java/.../CompositionLogicTest.kt   # 领域层单测
 ```
+
+---
+
+## 页面与可调参数
+
+| 页面 | 内容 |
+|---|---|
+| 启动页 | 矢量光圈动画 → 首次进入走引导，否则直接进取景 |
+| 引导页 | 3 页：实时建议 / 参数全给 / 不联网 |
+| **取景页** | 相机预览 + 构图叠加层 + 顶部快捷条 + 变焦胶囊 + 滤镜条 + 快门排 |
+| 参数面板 | 底部弹层，**不遮挡上半屏** —— 调参数时能一直看到画面变化 |
+| 滤镜页 | 实时大图预览（走导出同一条三线性路径）+ 强度滑杆 + 导出 .cube |
+| 边框页 | 7 种程序化边框，预览与导出共用 `BorderRenderer` |
+| 水印页 | 时间戳/机型/自定义文字、位置、透明度、字号、颜色；预览时间每秒走动 |
+| 设置页 | 分析调参（抽帧/平滑/驻留/人脸通道/评分徽标）+ 拍摄 + 格式画质 |
+| 相册页 | 仅显示本应用拍摄的照片（**不需要相册读取权限**），点开大图、长按删除 |
+| 预设页 | 参数组合保存/应用/删除/导出 |
+| 关于页 | 权限清单、算法拆解、技术栈、与商业版的区别 |
+
+### 全部可调参数（20+）
+
+| 分类 | 参数 |
+|---|---|
+| 曝光 | 曝光补偿 EV（−3…+3，按 0.5 步进）、ISO（自动/50…3200）、快门（自动/1s…1/2000s） |
+| 色彩 | 白平衡预设（自动/日光/阴天/阴影/白炽灯/荧光灯/自定色温 2000–8000K） |
+| 对焦 | 连续 AF / 单次 AF / 手动 MF（0–10 屈光度） |
+| 镜头 | 变焦 0.5×–8×（快捷 0.5/1/2/3/5）、前置/后置切换 |
+| 闪光 | 关 / 自动 / 开 / 常亮 |
+| 构图 | 网格（无/三分/黄金/中心/对角线）、水平仪开关、构图引导开关 |
+| 画幅 | 4:3 / 16:9 / 1:1 / 3:4 |
+| 其他 | 定时（关/3s/10s）、镜像（自动/开/关）、快门音、格式（JPEG/PNG/HEIC）、画质 60–100 |
+| 滤镜 | 20 个内置滤镜 + 强度 0–100% |
+| 边框 | 7 种边框 |
+| 水印 | 开关、时间、机型、自定义文字、位置、透明度、字号、颜色 |
+
 
 ---
 
@@ -89,7 +166,11 @@ app/src/test/java/.../CompositionLogicTest.kt   # 领域层单测
 
 - Android Studio Hedgehog+
 - JDK 17
-- Android SDK 34
+- Android SDK 34（`compileSdk` / `targetSdk` 均为 34）
+- **`minSdk = 29`（Android 10）** —— 这是刻意的下限：MediaStore 分区存储从
+  API 29 起可用，写自己创建的照片与下载文件**不需要任何存储权限**。
+  若降到 28，保存照片就必须申请 `WRITE_EXTERNAL_STORAGE`，
+  "只申请相机一项权限"的隐私承诺就守不住了。
 
 ### 2. 人脸级联文件（必需其一）
 
@@ -155,12 +236,11 @@ unzip -l app/build/outputs/apk/release/app-release.apk | grep -E "\.(tflite|onnx
 
 ```kotlin
 analysis.setAnalyzer(analyzerExecutor) { proxy ->
-    if (!throttler.shouldAnalyze()) { proxy.close(); return@setAnalyzer }
-    val src = proxy.toMat()
-    val small = downScaler.scale(src, 224)   // 复用 Mat，零分配
-    pipeline.analyze(small, orientationSensor.roll())
-    proxy.close()
+    val src = proxyToMat(proxy)                       // 复用 Mat，零每帧分配
+    analyzer.analyze(src, orientation.rollDegrees(), System.currentTimeMillis())
+    proxy.close()                                     // 必须在 finally 关闭
 }
+// FrameAnalyzer 内部：抽帧（FrameThrottler）→ 降到 224×224 → 快/慢通道
 ```
 
 ### 规则（纯函数，可插拔）
@@ -199,6 +279,7 @@ class LevelRule(private val resolve: (String) -> String) : Rule {
 - [`项目需求文档.md`](项目需求文档.md) — 完整 PRD（功能/非功能/验收标准）
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 技术架构与数据流
 - [`docs/ALGORITHMS.md`](docs/ALGORITHMS.md) — 各算法的原理与参数
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — 从单页取景到完整相机的变更记录
 
 ---
 
@@ -208,6 +289,32 @@ class LevelRule(private val resolve: (String) -> String) : Rule {
 - 不依赖任何联网能力（`INTERNET` 权限非必需）。
 - 所有算法均为公开经典方法，代码原创。
 - 不含任何第三方的模型、素材、UI 或商标。
+- **不含任何素材文件**：滤镜是运行时烘焙的 3D LUT（可导出 .cube），
+  边框/水印/图标/启动图全部由代码绘制。全项目没有一个美术资产。
+- 不设付费墙、不需要登录、不采集手机号 —— 所有功能与滤镜/边框/水印均可用。
+
+### 权限清单（全部）
+
+| 权限 | 用途 |
+|---|---|
+| `android.permission.CAMERA` | 取景与分析 |
+
+就这一项。相册写入走 MediaStore（写自己创建的文件无需权限），
+读取相册只读本应用创建的条目（同样无需权限），
+导出 .cube / 预设文本走 `MediaStore.Downloads`（无需权限）。
+
+### 与商业同类产品的差别
+
+| | 本项目 | 典型商业相机 App |
+|---|---|---|
+| 实时构图建议 | 有（端侧 CV + 规则） | 有 |
+| 全部参数可调 | 有（20+ 项） | 通常部分收费 |
+| 滤镜 | 20 个内置，可导出 .cube | 部分收费 |
+| 边框 / 水印 | 全部可用 | 部分收费 |
+| 付费墙 | 无 | 有 |
+| 账号 / 手机号 | 无 | 通常必需 |
+| 网络权限 | 不申请 | 通常申请 |
+| 素材文件 | 零 | 通常内置大量 LUT / 贴图 |
 
 ## License
 

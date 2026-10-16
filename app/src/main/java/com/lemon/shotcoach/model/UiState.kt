@@ -1,8 +1,21 @@
 package com.lemon.shotcoach.model
 
+import com.lemon.shotcoach.camera.GridStyle
+
 /**
  * UI 状态（由分析管线通过 StateFlow 推送）。
  * UI 层只读这个结构，不含任何视觉算法。
+ *
+ * == 网格样式的唯一来源 ==
+ * 这里刻意**复用** [com.lemon.shotcoach.camera.GridStyle]，而不是在自己内部
+ * 再定义一个枚举。之前两处各有一个 GridStyle（一个 3 档、一个 5 档），
+ * 参数页能选"对角线"但叠加层画不出来 —— 单一数据源从根上消除这类不一致。
+ *
+ * == 开关语义 ==
+ *  - [gridEnabled]：网格线（对应参数的 GridStyle.OFF）
+ *  - [levelEnabled]：水平基准线
+ *  - [guideEnabled]：构图引导（人脸框 / 主体圈 / 方向箭头 / 提示文案）
+ *  - [scoreEnabled]：评分 HUD（默认关，属调试/进阶信息）
  */
 data class UiState(
     val hint: Hint? = null,
@@ -17,6 +30,23 @@ data class UiState(
     /** 实测端到端延迟（毫秒） */
     val latencyMs: Float = 0f,
     val gridStyle: GridStyle = GridStyle.THIRDS,
-) {
-    enum class GridStyle { THIRDS, GOLDEN, CROSS }
-}
+    val gridEnabled: Boolean = true,
+    val levelEnabled: Boolean = true,
+    val guideEnabled: Boolean = true,
+    val scoreEnabled: Boolean = false,
+)
+
+/**
+ * 叠加层的显示配置（网格样式与各开关）。
+ *
+ * 单独抽出来的原因：这套配置是**纯 UI 关注点**，与分析结果无关，
+ * 但必须跟每一帧的分析结果一起推给界面（否则切换开关要等下一帧才生效）。
+ * 见 [com.lemon.shotcoach.analysis.FrameAnalyzer.overlayConfig]。
+ */
+data class OverlayConfig(
+    val gridStyle: GridStyle = GridStyle.THIRDS,
+    val gridEnabled: Boolean = true,
+    val levelEnabled: Boolean = true,
+    val guideEnabled: Boolean = true,
+    val scoreEnabled: Boolean = false,
+)

@@ -9,7 +9,11 @@ android {
 
     defaultConfig {
         applicationId = "com.lemon.shotcoach"
-        minSdk = 26
+        // minSdk 29（Android 10）是刻意的下限，不是随手写的：
+        // MediaStore 分区存储从 API 29 起可用，写自己创建的照片/下载文件
+        // **不需要任何存储权限**。若降到 28，保存照片就必须申请
+        // WRITE_EXTERNAL_STORAGE，"只申请相机一项权限"的隐私承诺就破了。
+        minSdk = 29
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
@@ -64,14 +68,27 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
 
+    // 基础
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // 导航（Splash → Guide → Camera → Filter/Border/Watermark/Settings/Gallery）
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
+    // EXIF 写入（拍摄参数落盘，参数调节闭环的最后一步）
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

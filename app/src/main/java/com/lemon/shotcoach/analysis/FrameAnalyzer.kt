@@ -10,6 +10,7 @@ import com.lemon.shotcoach.camera.FrameThrottler
 import com.lemon.shotcoach.model.FrameSignals
 import com.lemon.shotcoach.model.NormalizedPoint
 import com.lemon.shotcoach.model.NormalizedRect
+import com.lemon.shotcoach.model.OverlayConfig
 import com.lemon.shotcoach.model.UiState
 import com.lemon.shotcoach.rules.Rule
 import com.lemon.shotcoach.rules.RuleEngine
@@ -33,7 +34,19 @@ class FrameAnalyzer(
     alpha: Float = 0.35f,
     everyN: Int = 3,
     dwellMs: Long = 800L,
+    /** 人脸通道开关。关掉可省约 2ms/帧（见设置页）。 */
+    private val faceEnabled: Boolean = true,
 ) {
+    /**
+     * 叠加层配置，由 UI 线程写入、分析线程读取，随每帧 [UiState] 一并带出。
+     *
+     * 为什么放在这里：UI 的开关状态需要跟随**每一帧**的状态一起推给界面，
+     * 否则关掉网格后要等到下一次 recompose 才生效。这里不做线程同步的原语，
+     * 只用一个 @Volatile 引用整体替换 —— 读到的要么是旧值要么是新值，不会读到半个。
+     */
+    @Volatile
+    var overlayConfig: OverlayConfig = OverlayConfig()
+
     companion object {
         const val CANVAS = 224
         const val FACE_CANVAS = 320
@@ -100,7 +113,7 @@ class FrameAnalyzer(
             }
 
             // ── FR-7 人脸（每 N 帧，独立 320 画布）────────────
-            if (throttler.dueFor(faceAnalyzer.cadence)) {
+            if (faceEnabled && throttler.dueFor(faceAnalyzer.cadence)) {
                 val fout = faceScaler.scale(rgba)
                 Imgproc.cvtColor(fout.mat, gray320, Imgproc.COLOR_RGBA2GRAY)
                 cachedFaces = faceAnalyzer.analyze(gray320).map { mapFaceRect(fout, it) }
@@ -144,6 +157,7 @@ class FrameAnalyzer(
 
             val latency = (System.nanoTime() - t0) / 1_000_000f
 
+            val cfg = overlayConfig
             lastUiState = UiState(
                 hint = hint,
                 score = score,
@@ -152,7 +166,11 @@ class FrameAnalyzer(
                 faceRects = smoothed.faces,
                 fps = fps,
                 latencyMs = latency,
-                gridStyle = lastUiState.gridStyle,
+                gridStyle = cfg.gridStyle,
+                gridEnabled = cfg.gridEnabled,
+                levelEnabled = cfg.levelEnabled,
+                guideEnabled = cfg.guideEnabled,
+                scoreEnabled = cfg.scoreEnabled,
             )
             return lastUiState
         } finally {
