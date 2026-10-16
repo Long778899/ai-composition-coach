@@ -22,6 +22,12 @@ data class UiState(
     val score: CompositionScore? = null,
     /** 平滑后的主体位置 */
     val subjectPoint: NormalizedPoint? = null,
+    /** 端侧 AI 主体检测框（平滑后）。null = 未启用 AI，或本帧未检出主体 */
+    val subjectBox: NormalizedRect? = null,
+    /** 端侧 AI 主体类别标签（COCO 名称，如 "person"）。空串 = 无标签 */
+    val subjectLabel: String = "",
+    /** 本帧确实跑了神经网络的通道（UI 角标/诊断用，见 [AiChannel]） */
+    val aiChannels: Set<AiChannel> = emptySet(),
     /** 平滑后的水平倾角 */
     val rollDegrees: Float = 0f,
     val faceRects: List<NormalizedRect> = emptyList(),

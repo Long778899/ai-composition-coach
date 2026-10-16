@@ -3,6 +3,7 @@ package com.lemon.shotcoach.analysis.analyzer
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
+import org.opencv.core.MatOfDouble
 import org.opencv.imgproc.Imgproc
 
 /**
@@ -18,8 +19,12 @@ class SharpnessAnalyzer {
     val cadence = 3
 
     private val lap = Mat()
-    private val mean = Mat()
-    private val stddev = Mat()
+
+    // Core.meanStdDev 的 Java 签名要求 MatOfDouble（不是 Mat）。
+    // v1.0 这里写成了 Mat —— 仓库从没编译过，所以这个类型错误一直没暴露。
+    // 2026-10 引入真 Kotlin 编译器做校验时才发现并修掉。
+    private val mean = MatOfDouble()
+    private val stddev = MatOfDouble()
 
     private val history = ArrayDeque<Float>()
     private val historyCap: Int

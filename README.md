@@ -1,8 +1,12 @@
 # AI 构图教练 · AI Composition Coach
 
-实时取景构图分析引擎 —— **零模型文件、零联网依赖**，用经典计算机视觉 + 规则引擎实现"实时 AI 构图建议"。
+实时取景构图分析引擎 —— **端侧神经网络推理、零联网依赖**。经典计算机视觉 + 规则引擎负责快通道，
+端侧轻量模型（MediaPipe + NIMA）负责主体检测、人脸检测与美感评分，两者合成"实时 AI 构图建议"。
 
-> 本项目的核心命题：手机端做实时构图引导，**不需要神经网络，也一个模型都不用训**。
+> **v1.1 修正**：本仓库 v1.0 的核心命题是"手机端做实时构图引导，不需要神经网络，也一个模型都不用训"。
+> 实测后这条被自己推翻了 —— 伪显著性偏中心、人脸通道恒空，两个缺口靠调参补不回来。
+> v1.1 起接入**端侧预训练**模型做推理（**依然不训练任何模型**：权重是别人训好的，我们只做端侧推理）。
+> 完整的推翻理由与代价账单见 `docs/ALGORITHMS.md §10`。
 
 ---
 
@@ -221,12 +225,33 @@ gradle wrapper --gradle-version 8.4      # 或用 Android Studio 打开，会自
 
 ---
 
-## 验证"零模型"
+## 验证端侧模型
 
 ```bash
-unzip -l app/build/outputs/apk/release/app-release.apk | grep -E "\.(tflite|onnx|pt|mnn)$"
-# 期望：无输出
+# 核心三件模型应当在包里（没跑 tools/fetch-models.sh 则为空，App 仍可跑，自动退回纯 CV）
+unzip -l app/build/outputs/apk/release/app-release.apk | grep -E "\.tflite$"
+# 期望：efficientdet_lite0.tflite / blaze_face_short_range.tflite / nima_aesthetic_fp16.tflite
+
+# native 运行时要一起进去，否则运行期直接崩
+unzip -l app/build/outputs/apk/release/app-release.apk | grep -E "libmediapipe_tasks_jni|libtensorflowlite_jni"
+
+# 仍然没有 INTERNET 权限 —— 模型在包内，推理全在本地，数据不出设备
+grep -c "android.permission.INTERNET" app/src/main/AndroidManifest.xml
+# 期望：0
 ```
+
+### 没有 Android SDK 也能验证大部分代码
+
+```bash
+./tools/typecheck-no-sdk.sh
+```
+
+不用 Android SDK：直接拉真依赖 jar（MediaPipe / TFLite / OpenCV / android platform-34）
+配命令行 `kotlinc`，对「模型 · 分析层 · 规则 · 渲染 · 滤镜 · AI」整块做类型检查，
+并把 JVM 单元测试真正跑起来。实测 **39 个文件 0 错误、102 个 class、34 个单元测试全绿**。
+
+它抓到过两个真实类型错误（OpenCV `Mat` 没有 `data` 成员；`meanStdDev` 需要 `MatOfDouble`），
+但**不能替代 APK 构建** —— `ui/` 依赖 Compose + CameraX，不在覆盖范围内。
 
 ---
 

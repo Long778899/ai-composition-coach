@@ -254,7 +254,80 @@ if (newHint.id != currentHint.id && now - currentHint.shownAtMs < 800) {
 
 ---
 
-## 10. 参数速查表
+## 10. 端侧 AI 分析通道（v1.1）
+
+### 10.1 为什么推翻了"零模型文件"
+
+v1.0 把"零端侧模型"写进 G5 / NFR-5 / AC-06，理由是"经典 CV 够用"。实测下来这个判断在两个地方站不住：
+
+**① 伪显著性名不副实。** `SaliencyAnalyzer.spectralResidual()` 的注释写着"可按需替换为
+`Saliency.createStaticSaliencySpectralResidual()`"，但实现是直接转调 `gradientCenterPrior(gray)`，
+高斯 σ = 0.35·min(w,h)。也就是说显著性图被一个巨大的中心先验主导，
+**主体位置天然被拉向画面中心**。后果：主体明明在右侧三分点，`subjectScore` 反而偏低，
+`SubjectOffRule` 还会给出"把主体往左移"的错误建议。
+
+**② 人脸通道是死的。** `FaceAnalyzer` 有两条路：ML Kit（依赖在 `build.gradle.kts` 里被注释）
+和 OpenCV Haar 级联（需要 `haarcascade_frontalface_default.xml`，而 `assets/` 里没有）。
+两条都不通 → `cachedFaces` 永远为空 → `R_FACE_SMALL`(priority 60)、`R_FACE_NONE`(40) **永不触发**。
+7 条内置规则实际只有 5 条可能命中。
+
+这两件事的共同点是：**不是阈值调得不对，是信息根本没进来。** 所以 v1.1 的结论是引入真神经网络。
+
+### 10.2 三条通道
+
+| 通道 | 模型 | 体积 | 输入 | 输出 | 频率 | 单次耗时 |
+|---|---|---|---|---|---|---|
+| 主体检测 | EfficientDet-Lite0 int8（COCO 80 类） | 4.6MB | 长边 320 的 RGBA | 检测框 + 类别 + 置信度 | 每 3 帧 | 8~20ms |
+| 人脸检测 | BlazeFace short-range float16 | 229KB | 同上（与主体检测共用一次 MPImage） | 人脸框 | 每 2 帧 | ~3ms |
+| 美感评分 | NIMA MobileNet（AVA 预训练） | 6.4MB | 短边 224 → 中心裁剪 → RGB [-1,1] | 10 桶分布 → 期望分 1..10 | 每 5 帧 | ~18ms |
+
+主体检测与人脸检测**共用同一个 `MPImage`**（一次缩放、一次缓冲拷贝），这是把开销压下来的关键。
+
+### 10.3 延迟预算
+
+在 v1.0 的 ~17ms 基线上叠加（**这些数字是厂商/论文口径的估计，本机没有 Android SDK，未实测**）：
+
+| 帧类型 | 组成 | 估计耗时 |
+|---|---|---|
+| 普通帧 | 曝光 + 主体检测(1/3 概率) | ~17ms |
+| 含人脸帧 | 曝光 + 主体 + 人脸(1/2 概率) | ~20ms |
+| 含美感帧 | 上面 + NIMA(1/5 概率，相对每 15 帧一次) | ~38ms |
+
+最坏情况仍低于 G1 的 100ms 端到端预算。抽帧节奏是刻意的：**美感是慢变量，给 2Hz 足够**，
+不该和"手机抖了没有"这种快变量抢算力。
+
+### 10.4 降级设计（最重要的一节）
+
+`AiModels.has(context, name)` 探测不到模型时，对应通道的 `available` 为 `false`，
+`FrameAnalyzer` 里的 `wantSubject` / `wantFace` / `wantAesthetic` 恒为 `false`，
+AI 代码块整体零成本跳过。**模型缺失不是错误路径，是正常路径。**
+
+```kotlin
+val wantSubject = ai?.subjectAvailable == true && throttler.dueFor(AI_SUBJECT_CADENCE)
+val wantFace    = ai?.faceAvailable    == true && faceEnabled && throttler.dueFor(AI_FACE_CADENCE)
+val wantAesthetic = ai?.aestheticAvailable == true && throttler.dueFor(AI_AESTHETIC_CADENCE)
+// 三个都是 false → aiResult 为 null → 下面所有 AI 字段保持默认值
+// → effectiveSubject 退回 saliency 质心 → 规则/评分/UI 行为与 v1.0 逐位一致
+```
+
+这条路径由 `AiCompositionTest` 守着（16 个用例全部不依赖模型文件），
+防止将来"反正模型都有"把降级逻辑腐蚀掉。
+
+### 10.5 为什么不用 ML Kit，为什么两个运行时能共存
+
+- **不用 ML Kit 人脸**：它的模型随 Google Play 服务分发，在没有 Play 服务的设备上就等于没有模型。
+  本项目卖点之一是端侧可复现，所以把权重放进 `assets/`（MediaPipe 路线）。
+- **两个 TFLite 运行时**：MediaPipe 的 AAR 里是 `libmediapipe_tasks_jni.so`（静态链接了 TFLite），
+  独立引入的 `tensorflow-lite` 是 `libtensorflowlite_jni.so`。**文件名不同、符号表独立**，
+  已核对两边 `.so` 清单，不存在同名覆盖。选原生 Interpreter 而不是 MediaPipe 任务 API，
+  是因为 MediaPipe 没有"回归/分布输出"的任务类型，NIMA 的 10 桶分布只能自己跑。
+- **只用 `ByteBufferImageBuilder`**：核对字节码发现 `BitmapImageContainer.close()` 内部会调
+  `bitmap.recycle()` —— 复用 Bitmap 的写法第二帧就崩；`ByteBufferImageContainer.close()` 是空实现，
+  所以走 direct `ByteBuffer` 复用路线，真正做到零每帧大分配（只复用 320² RGBA 缓冲）。
+
+---
+
+## 11. 参数速查表
 
 | 参数 | 默认值 | 位置 |
 |---|---|---|

@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import com.lemon.shotcoach.analysis.AiPipeline
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -162,6 +163,10 @@ fun CameraScreen(
             everyN = tuning.second,
             dwellMs = tuning.third,
             faceEnabled = faceEnabled,
+            // 端侧 AI 管线（路径 1：真神经网络，全离线）。
+            // 模型文件不随仓库分发；缺失时内部 available 全为 false，管线自动退回纯 CV，
+            // 行为与 v1.0 逐位一致。拉模型见 tools/fetch-models.sh。
+            ai = AiPipeline(context),
         )
     }
     val orientation = remember { OrientationAnalyzer(context) }

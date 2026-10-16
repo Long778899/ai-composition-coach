@@ -15,14 +15,15 @@ android {
         // WRITE_EXTERNAL_STORAGE，"只申请相机一项权限"的隐私承诺就破了。
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         // 本项目只做端侧分析，不需要任何网络能力
         // 不申请 INTERNET 权限，见 AndroidManifest.xml
+        // v1.1 接入端侧神经网络后这条**依旧成立**：模型在 assets 里，推理全在本地。
 
         ndk {
-            // 只保留 arm64，减小包体（OpenCV 是多 ABI 大头）
+            // 只保留 arm64，减小包体（OpenCV / MediaPipe / TFLite 都是多 ABI 大头）
             abiFilters += listOf("arm64-v8a")
         }
     }
@@ -56,6 +57,12 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+
+    androidResources {
+        // 端侧模型不压缩：省掉运行期整块解压到内存的一步，也让 APK 内条目可直接 mmap。
+        // （MediaPipe 走 AssetManager 也能读压缩条目，但那会多一份模型大小的常驻内存。）
+        noCompress += listOf("tflite")
     }
 }
 
@@ -97,8 +104,22 @@ dependencies {
     // 用本地模块时改成 implementation(project(":opencv"))
     implementation("org.opencv:opencv:4.9.0")
 
-    // 人脸检测（可选，缺失时自动回退到 OpenCV Cascade）
-    // implementation("com.google.mlkit:face-detection:16.1.6")
+    // ── 端侧 AI 推理（v1.1 路径 1：真神经网络，全离线，不联网）──────────
+    //
+    // MediaPipe Tasks Vision：目标检测（真主体框）+ 人脸检测。
+    // 自带 native 运行时 libmediapipe_tasks_jni.so；模型由 assets 提供。
+    // 为什么不用 ML Kit：ML Kit 人脸模型随 Play 服务分发，离线纯端侧场景不可控；
+    // MediaPipe 把权重放 assets，行为完全可复现。
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
+
+    // TFLite 运行时：只有 NIMA 美感/技术质量评分用（MediaPipe 没有回归任务 API）。
+    // 它的 native 库是 libtensorflowlite_jni.so —— 与 libmediapipe_tasks_jni.so **名字不同**，
+    // 两个运行时可以共存（已核对两边的 .so 清单，无同名冲突）。
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+
+    // 可选：GPU delegate。Adreno/Mali 上主体检测可再快 2~3 倍。
+    // 启用后需把 AiPipeline 里的 Delegate.CPU 换成 GPU，并保留 CPU 回退（低端机会失败）。
+    // implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
 
     // 测试
     testImplementation("junit:junit:4.13.2")

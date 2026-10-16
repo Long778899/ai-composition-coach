@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lemon.shotcoach.camera.GridStyle
+import com.lemon.shotcoach.model.AiChannel
 import com.lemon.shotcoach.model.Hint
 import com.lemon.shotcoach.model.UiState
 import kotlin.math.abs
@@ -107,21 +108,37 @@ fun OverlayView(
                 }
             }
 
-            // ── 主体指示框（显著性定位）────────────────────
-            if (guide) state.subjectPoint?.let { p ->
-                val cx = p.x * w
-                val cy = p.y * h
-                drawCircle(
-                    color = Color(0xFF64B5F6).copy(alpha = 0.9f),
-                    radius = 26.dp.toPx(),
-                    center = Offset(cx, cy),
-                    style = Stroke(width = 2.dp.toPx()),
-                )
-                drawCircle(
-                    color = Color(0xFF64B5F6).copy(alpha = 0.5f),
-                    radius = 3.dp.toPx(),
-                    center = Offset(cx, cy),
-                )
+            // ── 主体指示（端侧 AI 检测框优先，否则退回显著性质心）──
+            if (guide) {
+                val box = state.subjectBox
+                if (box != null) {
+                    // 神经网络**测**出来的主体框，画成相机对焦框的样子（四角标记，不用实心方框）
+                    val tl = Offset(box.left * w, box.top * h)
+                    val sz = Size(box.width * w, box.height * h)
+                    val aiColor = Color(0xFF64B5F6)
+                    drawRect(
+                        color = aiColor.copy(alpha = 0.55f),
+                        topLeft = tl,
+                        size = sz,
+                        style = Stroke(width = 1.dp.toPx()),
+                    )
+                    drawSubjectCorners(tl, sz, aiColor.copy(alpha = 0.95f))
+                } else state.subjectPoint?.let { p ->
+                    // 无 AI 时的旧路径：显著性"猜"出来的质心
+                    val cx = p.x * w
+                    val cy = p.y * h
+                    drawCircle(
+                        color = Color(0xFF64B5F6).copy(alpha = 0.9f),
+                        radius = 26.dp.toPx(),
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                    drawCircle(
+                        color = Color(0xFF64B5F6).copy(alpha = 0.5f),
+                        radius = 3.dp.toPx(),
+                        center = Offset(cx, cy),
+                    )
+                }
             }
 
             // ── 方向箭头 ─────────────────────────────────
@@ -147,12 +164,35 @@ fun OverlayView(
             )
         }
 
+        // ── AI 角标：证明本帧确实跑了端侧神经网络（非装饰）────
+        if (state.guideEnabled && state.aiChannels.isNotEmpty()) {
+            Text(
+                text = "AI",
+                color = Color(0xFF4CD964),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+
         // ── 评分 HUD（默认关，设置里可开）─────────────────
         if (state.scoreEnabled) state.score?.let { s ->
+            val aesthetic = s.aestheticScore
+            val aiLine = if (state.aiChannels.isEmpty()) {
+                ""
+            } else {
+                "\nAI: " + state.aiChannels.joinToString("+") { it.label() }
+            }
             Text(
                 text = "分 ${s.total} · 主 ${s.subjectScore} 平 ${s.levelScore} " +
-                    "曝 ${s.exposureScore} 清 ${s.sharpnessScore}\n" +
-                    "%.1f fps · %.1f ms".format(state.fps, state.latencyMs),
+                    "曝 ${s.exposureScore} 清 ${s.sharpnessScore}" +
+                    (aesthetic?.let { "\n美感 $it (NIMA)" } ?: "") +
+                    "\n%.1f fps · %.1f ms".format(state.fps, state.latencyMs) +
+                    aiLine,
                 color = Color.White.copy(alpha = 0.75f),
                 fontSize = 11.sp,
                 modifier = Modifier
@@ -206,4 +246,36 @@ private fun DrawScope.drawDirectionArrow(
         }
     }
     drawPath(path, color, style = Stroke(width = 4.dp.toPx()))
+}
+
+/**
+ * 画主体检测框的"四角标记"（相机对焦框那种）。
+ *
+ * 不用实心方框的原因：端侧 AI 的框会随帧小幅抖动，实心框看着像画面被切了一刀；
+ * 四角标记视觉重量低，且天然传达"这是检测结果"而不是"这是裁剪区"。
+ */
+private fun DrawScope.drawSubjectCorners(topLeft: Offset, size: Size, color: Color) {
+    val l = (minOf(size.width, size.height) * 0.22f)
+        .coerceIn(6.dp.toPx(), 26.dp.toPx())
+    val stroke = 2.dp.toPx()
+    val x0 = topLeft.x
+    val y0 = topLeft.y
+    val x1 = topLeft.x + size.width
+    val y1 = topLeft.y + size.height
+
+    drawLine(color, Offset(x0, y0), Offset(x0 + l, y0), stroke)   // 左上横
+    drawLine(color, Offset(x0, y0), Offset(x0, y0 + l), stroke)   // 左上竖
+    drawLine(color, Offset(x1, y0), Offset(x1 - l, y0), stroke)   // 右上横
+    drawLine(color, Offset(x1, y0), Offset(x1, y0 + l), stroke)   // 右上竖
+    drawLine(color, Offset(x0, y1), Offset(x0 + l, y1), stroke)   // 左下横
+    drawLine(color, Offset(x0, y1), Offset(x0, y1 - l), stroke)   // 左下竖
+    drawLine(color, Offset(x1, y1), Offset(x1 - l, y1), stroke)   // 右下横
+    drawLine(color, Offset(x1, y1), Offset(x1, y1 - l), stroke)   // 右下竖
+}
+
+/** 端侧 AI 通道的中文名（评分 HUD 用） */
+private fun AiChannel.label(): String = when (this) {
+    AiChannel.SUBJECT -> "主体"
+    AiChannel.FACE -> "人脸"
+    AiChannel.AESTHETIC -> "美感"
 }
