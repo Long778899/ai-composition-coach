@@ -15,8 +15,8 @@ android {
         // WRITE_EXTERNAL_STORAGE，"只申请相机一项权限"的隐私承诺就破了。
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.1.2"
 
         // 本项目只做端侧分析，不需要任何网络能力
         // 不申请 INTERNET 权限，见 AndroidManifest.xml

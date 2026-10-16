@@ -202,4 +202,66 @@ class LandscapeCompositionTest {
         assertTrue("前提：这张图总分确实够高", CompositionScorer.score(s).total > BuiltinRules.GOOD_SCORE)
         assertEquals("R_HORIZON", hint(s)?.id)
     }
+
+    // ── 根因 4（v1.1.2）：水平抢占了唯一的一行提示位 ────────────
+    //
+    // 用户报"水平的检测过于严格，构图建议几乎没有"。实测（0~10° 共 21 档）
+    // R_LEVEL 占掉 14 档。机理是 `priority >= 90` 让它无条件参赛，
+    // 于是 90 的水平永远压过 70 的主体、65 的地平线。
+
+    /** 倾斜若干度、其余正常的风景（地平线压在正中，本该给地平线建议） */
+    private fun tiltedLandscape(roll: Float) = FrameSignals(
+        brightness = 132f, sharpness = 300f,
+        rollDegrees = roll, horizonDegrees = roll, horizonY = 0.5f,
+        saliencyConcentration = 0.01f,
+    )
+
+    @Test
+    fun `轻度倾斜不再压过地平线建议`() {
+        assertEquals("4° 不该抢走地平线建议", "R_HORIZON", hint(tiltedLandscape(4f))?.id)
+    }
+
+    @Test
+    fun `轻度倾斜不再压过主体建议`() {
+        val s = FrameSignals(
+            brightness = 132f, sharpness = 300f,
+            rollDegrees = 4f, horizonDegrees = 4f,
+            subject = NormalizedPoint(0.90f, 0.50f), saliencyConcentration = 0.20f,
+        )
+        assertEquals("4° 不该抢走主体建议", "R_SUBJECT_OFF", hint(s)?.id)
+    }
+
+    @Test
+    fun `5 度以内完全不打扰`() {
+        // 4.5° < LEVEL_THRESHOLD_DEG(5°) → R_LEVEL 不说话；
+        // 其余都正常但总分只有 76（< 85）→ R_GOOD 也沉默。
+        // 结论就是**不给提示** —— 倾斜由实时水平基准线兜着，提示位不该被它占用。
+        val s = FrameSignals(
+            brightness = 132f, sharpness = 300f,
+            rollDegrees = 4.5f, saliencyConcentration = 0.01f,
+        )
+        assertNull("4.5° 的倾斜不值得占用提示位", hint(s))
+    }
+
+    @Test
+    fun `轻度倾斜且其它都正常时才提示回正`() {
+        val s = FrameSignals(
+            brightness = 132f, sharpness = 300f,
+            rollDegrees = 6f, saliencyConcentration = 0.01f,
+        )
+        assertEquals("6° 且没别的问题 → 提示回正", "R_LEVEL", hint(s)?.id)
+    }
+
+    @Test
+    fun `严重倾斜强制压过构图建议`() {
+        // 12° > LEVEL_SEVERE_DEG(10°)：照片已经废了，优先级 92 必须压过地平线(65)
+        assertEquals("R_LEVEL_SEVERE", hint(tiltedLandscape(12f))?.id)
+    }
+
+    @Test
+    fun `严重倾斜仍然让位于曝光错误`() {
+        // 曝光 95 > 严重倾斜 92：曝光错误更致命
+        val s = tiltedLandscape(12f).copy(brightness = 30f)
+        assertEquals("R_EXPOSE_LOW", hint(s)?.id)
+    }
 }

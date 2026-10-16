@@ -254,11 +254,12 @@ if (newHint.id != currentHint.id && now - currentHint.shownAtMs < 800) {
 | 优先级 | 规则 | 依据 |
 |---|---|---|
 | 95 | R_EXPOSE_LOW / HIGH（严重） | 曝光错误会让照片直接废掉 |
-| 90 | R_LEVEL | 歪斜最刺眼，且一秒钟可改 |
+| 92 | R_LEVEL_SEVERE（v1.1.2） | > 10° 的照片已经废了，压过构图建议强制播报 |
 | 80 | R_BLUR | 失焦无法事后修复 |
 | 70 | R_SUBJECT_OFF | 需要移动取景，成本高 |
 | 65 | R_HORIZON | 地平线位置（v1.1.1）；**拍景物最有用的一条** |
 | 60 | R_FACE_SMALL | |
+| 55 | R_LEVEL（v1.1.2 由 90 降级） | 倾斜已有**实时水平线**兜着，不该占用唯一的提示位 |
 | 10 | R_GOOD | 无问题时给正反馈 |
 
 > **v1.1.1 变更**：`R_FACE_NONE`(40) 已**删除**。它要求画面里有人脸 —— 风景照永远不满足，
@@ -266,6 +267,15 @@ if (newHint.id != currentHint.id && now - currentHint.shownAtMs < 800) {
 > 给不出可执行建议时正确做法是**安静**，不是永久报错。删除后**不做替代**。
 >
 > 另：`aspect = null` 的规则（`R_HORIZON` / `R_GOOD`）不受"最差子项"筛选限制，总能参赛。
+
+> **v1.1.2 变更**：`R_LEVEL` 优先级 **90 → 55**、阈值 **3° → 5°**，另加 `R_LEVEL_SEVERE`(92, > 10°)。
+> 起因：用户报"水平的检测过于严格，构图建议几乎没有"。
+> 实测（0~10° 每 0.5° 一档共 21 档）：`R_LEVEL` 占掉 **14 档**，构图建议只剩 7 档。
+> 机理：`RuleEngine` 的 `filter { aspect == null || aspect == worstAspect || priority >= 90 }`
+> 让 `priority >= 90` 的规则**无条件参赛** —— 于是 90 的水平永远压过 70 的主体、65 的地平线。
+>
+> 分层设计：**≤ 5°** 交给实时水平基准线（提示不吭声）；**5°~10°** 提示位让给构图建议；
+> **> 10°** 强制播报（此时水平分已扣到 0，分数与提示说的是同一件事）。
 > 主体未测到时 SUBJECT 子项退赛，`R_SUBJECT_OFF` 与 `R_FACE_SMALL` 都返回 null。
 
 ---
@@ -357,7 +367,7 @@ val wantAesthetic = ai?.aestheticAvailable == true && throttler.dueFor(AI_AESTHE
 | 地平线频率 | 每 3 帧 | `HorizonAnalyzer.cadence = 3` |
 | EMA α | 0.35 | `EmaSmoother` |
 | 提示驻留 | 800ms | `RuleEngine` |
-| 水平告警阈值 | 3° | `R_LEVEL` |
+| 水平告警阈值 | 5°（> 10° 走 `R_LEVEL_SEVERE`） | `R_LEVEL` |
 | 欠曝阈值 | mean < 60 | `R_EXPOSE_LOW` |
 | 过曝阈值 | mean > 200 | `R_EXPOSE_HIGH` |
 | 主体偏移阈值 | 15% 画幅 | `R_SUBJECT_OFF` |

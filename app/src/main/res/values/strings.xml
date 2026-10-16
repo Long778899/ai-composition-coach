@@ -6,6 +6,8 @@
     <string name="hint_level_left">相机向左倾斜一点</string>
     <string name="hint_level_right">相机向右倾斜一点</string>
     <string name="hint_level_ok">已水平</string>
+    <!-- 严重倾斜（> 10°），v1.1.2 新增。轻微倾斜交给实时水平线，不占提示位 -->
+    <string name="hint_level_severe">相机歪得厉害，先回正</string>
     <string name="hint_expose_low">画面偏暗，增加曝光</string>
     <string name="hint_expose_high">画面偏亮，降低曝光</string>
     <string name="hint_subject_left">把主体往左移一点</string>

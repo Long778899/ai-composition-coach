@@ -18,6 +18,7 @@ import kotlin.math.abs
  * v1.0 用显著性质心当主体位置，而那个质心被中心先验强行拉向画面中央 ——
  * 主体明明在右侧三分点，规则却判"偏了"。v1.1 一律读 [FrameSignals.effectiveSubject]：
  * 端侧 AI 检测框中心优先，没有 AI 时才退回质心。**AI 关闭时行为与 v1.0 逐位一致。**
+ * （例外：主体测不到时主体子项退赛并归一化，见 v1.1.1。）
  *
  * ## v1.1.1：从"人像中心"改为"场景无关"
  *
@@ -30,10 +31,41 @@ import kotlin.math.abs
  *     v1.0 算了地平线倾角却从没用过它的**高度**，拍风景等于一条建议都没有。
  *  3. **主体判据统一收敛到 [FrameSignals.subjectKnown]**，与评分器共用同一定义，
  *     不再各写各的 `0.02` 魔数。
+ *
+ * ## v1.1.2：水平从"抢占提示位"降为"兜底提示"
+ *
+ * 起因：用户报"水平的检测过于严格，构图建议几乎没有"。
+ *
+ * 实测（0~10° 每 0.5° 一档、共 21 档）：`R_LEVEL` 占掉 **14 档**，构图建议只剩 7 档。
+ * 机理在优先级阶梯 —— 原 `R_LEVEL` = 90，而 [com.lemon.shotcoach.rules.RuleEngine] 的
+ * `filter { aspect == null || aspect == worstAspect || priority >= 90 }`
+ * 使 `priority >= 90` 的规则**无条件参赛**，于是水平(90) 永远压过主体(70)、地平线(65)。
+ * 再叠加 3° 的阈值（手持自然晃动就在 ±3° 上下），提示位就被它垄断了。
+ *
+ * 三处修正：
+ *  1. 阈值 3° → [LEVEL_THRESHOLD_DEG]（5°）：手持常态不再算"倾斜"。
+ *  2. [LevelRule] 优先级 90 → **55**：只在水平确为**最差子项**时才参赛，
+ *     构图类规则（地平线 65 / 主体 70 / 人脸 60）一律优先。
+ *     依据是倾斜**已经有实时水平基准线兜着**（OverlayView，|roll| < 1° 变绿），
+ *     不必再占用唯一的一行提示位。
+ *  3. 新增 [LevelSevereRule]（priority 92，> 10°）：真歪得厉害时仍然强制播报。
  */
 object BuiltinRules {
 
-    const val LEVEL_THRESHOLD_DEG = 3f
+    /**
+     * 轻微倾斜的告警阈值（度）。
+     *
+     * v1.1.2 从 3° 放宽到 5°：手持拍摄的自然晃动就在 ±3° 上下，3° 会让 [LevelRule]
+     * 几乎每帧命中，把构图建议全挤掉（实测见上方 v1.1.2 说明）。
+     */
+    const val LEVEL_THRESHOLD_DEG = 5f
+
+    /**
+     * 严重倾斜阈值（度）。超过它照片基本就废了，[LevelSevereRule] 会**压过构图建议**强制播报。
+     *
+     * 取 10° 而非更小：此时水平分（每度扣 12 分）已经扣到 0，分数与提示说的是同一件事。
+     */
+    const val LEVEL_SEVERE_DEG = 10f
     const val EXPOSE_LOW = 60f
     const val EXPOSE_HIGH = 200f
     const val CLIP_RATIO = 0.15f
@@ -56,6 +88,7 @@ object BuiltinRules {
         ExposeLowRule(resolve),
         ExposeHighRule(resolve),
         LevelRule(resolve),
+        LevelSevereRule(resolve),
         BlurRule(resolve),
         SubjectOffRule(resolve),
         HorizonPlacementRule(resolve),
@@ -92,9 +125,20 @@ class ExposeHighRule(private val resolve: (String) -> String) : Rule {
 }
 
 // ── R-LEVEL ──────────────────────────────────────────────────
+/**
+ * 轻微倾斜（v1.1.2 **降级**：priority 90 → 55）。
+ *
+ * 原来 `priority = 90` 让它**无条件参赛**，只要歪过 3° 就压过地平线建议(65)与主体建议(70)
+ * —— 这就是"构图建议几乎没有"的成因。降到 55 后它只在水平确为最差子项时才说话，
+ * 构图类规则一律优先。
+ *
+ * 敢降的理由：倾斜有专属的**实时水平基准线**（见 OverlayView，|roll| < 1° 变绿），
+ * 用户随时看得到；一行提示位是稀缺资源，该留给构图（本 App 的用途）。
+ * 真歪得厉害时由 [LevelSevereRule] 强制播报。
+ */
 class LevelRule(private val resolve: (String) -> String) : Rule {
     override val id = "R_LEVEL"
-    override val priority = 90
+    override val priority = 55
     override val aspect = CompositionScore.Aspect.LEVEL
     override fun match(s: FrameSignals, c: CompositionScore): Rule.Match? {
         val roll = s.effectiveRoll
@@ -102,6 +146,34 @@ class LevelRule(private val resolve: (String) -> String) : Rule {
         // roll > 0：设备顺时针倾斜 → 提示向左回转
         return if (roll > 0f) Rule.Match("hint_level_left", Hint.Direction.LEFT)
         else Rule.Match("hint_level_right", Hint.Direction.RIGHT)
+    }
+
+    override fun textFor(m: Rule.Match) = resolve(m.textKey)
+}
+
+// ── R-LEVEL_SEVERE ───────────────────────────────────────────
+/**
+ * 严重倾斜（v1.1.2 新增，priority 92）。
+ *
+ * 与 [LevelRule] 的分工是一条**能一句话讲清的分界线**：
+ *  - ≤ [BuiltinRules.LEVEL_THRESHOLD_DEG]（5°）→ 交给实时水平线，提示不吭声；
+ *  - 5° ~ [BuiltinRules.LEVEL_SEVERE_DEG]（10°）→ 提示位让给构图建议，倾斜由水平线兜着；
+ *  - \> 10° → 照片已经废了，**压过构图建议**强制播报。
+ *
+ * `priority = 92 >= 90` 使它无条件参赛（正是我们想要的"压过一切"），
+ * 但排在曝光(95)之后 —— 曝光错误更致命。
+ */
+class LevelSevereRule(private val resolve: (String) -> String) : Rule {
+    override val id = "R_LEVEL_SEVERE"
+    override val priority = 92
+    override val aspect = CompositionScore.Aspect.LEVEL
+
+    override fun match(s: FrameSignals, c: CompositionScore): Rule.Match? {
+        val roll = s.effectiveRoll
+        if (abs(roll) <= BuiltinRules.LEVEL_SEVERE_DEG) return null
+        // 文案统一是"先回正"：歪到这个程度，关键是让用户知道这是首要问题
+        return if (roll > 0f) Rule.Match("hint_level_severe", Hint.Direction.LEFT)
+        else Rule.Match("hint_level_severe", Hint.Direction.RIGHT)
     }
 
     override fun textFor(m: Rule.Match) = resolve(m.textKey)
